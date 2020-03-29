@@ -1,0 +1,23 @@
+{
+  "name": "encrypted-firestore",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LeoDecking/encryptedFirestore.git"
+  },
+  "author": "Leo Decking",
+  "bugs": {
+    "url": "https://github.com/LeoDecking/encryptedFirestore/issues"
+  },
+  "homepage": "https://github.com/LeoDecking/encryptedFirestore#readme",
+  "devDependencies": {
+    "typescript": "^3.8.3"
+  },
+  "dependencies": {
+    "firebase": "^7.13.1",
+    "nacl": "^0.1.3"
+  }
+}
