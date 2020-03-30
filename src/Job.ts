@@ -1,6 +1,6 @@
 import { DatabaseObject, DatabaseObjectType, VerifyKey } from "./DatabaseObject";
 
-export class Job extends DatabaseObject<"Job", Job, City> {
+export class Job extends DatabaseObject<"job", Job, City> {
     name?: string;
     supersecretValue: number = 23;
 
@@ -10,6 +10,8 @@ export class Job extends DatabaseObject<"Job", Job, City> {
 export class City extends DatabaseObject<"city", City, App> {
     cityName: string = "";
 }
+
+export class CityAdmin
 
 export class App extends DatabaseObject<"app", App, never> {
     appName: string = "";

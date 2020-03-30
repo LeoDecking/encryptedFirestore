@@ -1,13 +1,13 @@
 import { firestore } from "firebase";
-import { Job, City, App } from "./Job";
 import { AutoId } from "./AutoId";
+import { Job, City } from "./Job";
 
-export class DatabaseObject<Tstring extends string, T extends DatabaseObjectType, P extends DatabaseObjectType> {
-    private _type?: Tstring;
-    parent?: P;
+export class DatabaseObject<Tstring extends string, T extends DatabaseObjectType, P extends DatabaseObjectType, O extends DatabaseObjectType = P> {
+    type: Tstring;
+    parent?: O;
 
     // properties: { [K in keyof this]?: true } = { parent: true };
-    private superProperties: string[] = ["id", "version", "secretKey"];
+    private superProperties: string[] = ["id", "path", "version", "secretKey"];
     properties: string[] = [];
 
     id: string = AutoId.newId();
@@ -19,13 +19,15 @@ export class DatabaseObject<Tstring extends string, T extends DatabaseObjectType
 
     // parent has to be set except for app
     // TODO only allow parent not to be set for app 
-    constructor(parent?: P) {
+    constructor(parent?: O) {
         this.parent = parent;
+        this.type=a;
     }
 
-    static converter<T extends DatabaseObjectType>(this: new (parent: T["parent"]) => T, parent: T["parent"]) {
+    static converter<T extends DatabaseObjectType>(this: new (parent: T["parent"]) => T, parent: T["parent"], path: string) {
         let constructor = this;
         return {
+            // executed in firebase cloud functions
             toFirestore<T>(databaseObject: T): firestore.DocumentData {
                 // TODO throw error if id is undefined
                 let documentData = { ...databaseObject, parent: undefined };
@@ -33,6 +35,7 @@ export class DatabaseObject<Tstring extends string, T extends DatabaseObjectType
                 // TODO test if _type is present
                 return documentData;
             },
+            // executed on client
             fromFirestore(snapshot: firestore.QueryDocumentSnapshot, options: firestore.SnapshotOptions): T {
                 const data = snapshot.data(options)!;
                 return new constructor(parent);
@@ -41,7 +44,11 @@ export class DatabaseObject<Tstring extends string, T extends DatabaseObjectType
     }
 }
 
-export type DatabaseObjectType = DatabaseObject<string, DatabaseObjectType, DatabaseObjectType> | never;
+type GetOwner<T,B> = B extends true ? T["parent"] : GetOwner<T["parent"],T["owserIsParent"]
+
+Job.converter(new City(), `/${new City().id}/`)
+
+export type DatabaseObjectType = DatabaseObject<string, DatabaseObjectType, DatabaseObjectType, DatabaseObjectType> | never;
 
 
 class Key<K extends string, T extends DatabaseObjectType> {
