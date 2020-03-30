@@ -1,14 +1,19 @@
 import { firestore } from "firebase";
 import { AutoId } from "./AutoId";
-import { Job, City } from "./Job";
+import { VerifyKey } from "./Key";
+import { DatabaseObjectType, GetOwner } from "./DatabaseObjectType";
+import { App } from "./App";
 
-export class DatabaseObject<Tstring extends string, T extends DatabaseObjectType, P extends DatabaseObjectType, O extends DatabaseObjectType = P> {
-    type: Tstring;
-    parent?: O;
+export abstract class DatabaseObject<Tstring extends string, T extends DatabaseObjectType, P extends DatabaseObjectType | App, ParentIsOwner extends boolean = true> {
+    private _type?: Tstring;
+    abstract readonly _parentIsOwner: ParentIsOwner;
+    abstract readonly _collection: string;
 
-    // properties: { [K in keyof this]?: true } = { parent: true };
-    private superProperties: string[] = ["id", "path", "version", "secretKey"];
-    properties: string[] = [];
+    readonly parent: P;
+    readonly owner: GetOwner<T>;
+
+    abstract readonly _properties: string[];
+
 
     id: string = AutoId.newId();
     version: number = 0;
@@ -17,17 +22,27 @@ export class DatabaseObject<Tstring extends string, T extends DatabaseObjectType
 
     // secretKey?: EncryptedProperty<Parent, SecretKey<T>>;
 
-    // parent has to be set except for app
-    // TODO only allow parent not to be set for app 
-    constructor(parent?: O) {
+    constructor(parent: P) {
         this.parent = parent;
-        this.type=a;
+
+        let current: DatabaseObjectType = this;
+        for (; !App.isApp(current.parent) && !current._parentIsOwner; current = current.parent);
+        this.owner = current.parent as GetOwner<T>;
+    }
+
+    // private
+    getPath(): string {
+        let path: string = "";
+        for (let current: DatabaseObjectType | App = this; !App.isApp(current); current = current.parent) {
+            path = "/" + current._collection + "/" + current.id + path;
+        }
+        return path;
     }
 
     static converter<T extends DatabaseObjectType>(this: new (parent: T["parent"]) => T, parent: T["parent"], path: string) {
         let constructor = this;
         return {
-            // executed in firebase cloud functions
+            // result will be sent to firebase cloud functions
             toFirestore<T>(databaseObject: T): firestore.DocumentData {
                 // TODO throw error if id is undefined
                 let documentData = { ...databaseObject, parent: undefined };
@@ -43,27 +58,3 @@ export class DatabaseObject<Tstring extends string, T extends DatabaseObjectType
         };
     }
 }
-
-type GetOwner<T,B> = B extends true ? T["parent"] : GetOwner<T["parent"],T["owserIsParent"]
-
-Job.converter(new City(), `/${new City().id}/`)
-
-export type DatabaseObjectType = DatabaseObject<string, DatabaseObjectType, DatabaseObjectType, DatabaseObjectType> | never;
-
-
-class Key<K extends string, T extends DatabaseObjectType> {
-    private _keyType?: K;
-    private _objectType?: T;
-
-    string: string;
-    uint8Array: Uint8Array;
-
-    constructor(_t: new (parent: T["parent"]) => T, key: string | Uint8Array) {
-        this.string = typeof key == "string" ? key : "";
-        this.uint8Array = typeof key == "string" ? new Uint8Array() : key;
-    }
-}
-
-class SignKey<T extends DatabaseObjectType> extends Key<"sign", T> { }
-export class VerifyKey<T extends DatabaseObjectType> extends Key<"verify", T> { }
-class SecretKey<T extends DatabaseObjectType> extends Key<"secret", T> { }

@@ -1,28 +1,21 @@
-import { DatabaseObject, DatabaseObjectType, VerifyKey } from "./DatabaseObject";
+import { DatabaseObject } from "./DatabaseObject";
+import { VerifyKey } from "./Key";
+import { App } from "./App";
 
 export class Job extends DatabaseObject<"job", Job, City> {
+    _collection = "jobs";
+    _parentIsOwner: true = true;
+    _properties = ["name"];
+
     name?: string;
     supersecretValue: number = 23;
 
-    properties = [""];
 }
 
 export class City extends DatabaseObject<"city", City, App> {
+    _collection = "cities";
+    _parentIsOwner: true = true;
+    _properties = [];
+
     cityName: string = "";
-}
-
-export class CityAdmin
-
-export class App extends DatabaseObject<"app", App, never> {
-    appName: string = "";
-    verifyKey?: VerifyKey<App> = new VerifyKey(App, "123");
-
-    static app: App = new App();
-}
-
-class Test {
-    test?: {
-        a: string,
-        b: number
-    };
 }
