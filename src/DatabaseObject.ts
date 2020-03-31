@@ -3,58 +3,77 @@ import { AutoId } from "./AutoId";
 import { VerifyKey } from "./Key";
 import { DatabaseObjectType, GetOwner } from "./DatabaseObjectType";
 import { App } from "./App";
+import { KeyStore } from "./KeyStore";
 
 export abstract class DatabaseObject<Tstring extends string, T extends DatabaseObjectType, P extends DatabaseObjectType | App, ParentIsOwner extends boolean = true> {
     private _type?: Tstring;
-    abstract readonly _parentIsOwner: ParentIsOwner;
-    abstract readonly _collection: string;
+    private readonly ignoreProperties = ["ignoreProperties", "parentIsOwner", "collection", "encryptedProperties", "id", "parent", "owner"];
+    abstract readonly parentIsOwner: ParentIsOwner;
+    abstract readonly collection: string;
+    abstract readonly encryptedProperties: string[];
 
     readonly parent: P;
     readonly owner: GetOwner<T>;
 
-    abstract readonly _properties: string[];
 
-
-    id: string = AutoId.newId();
+    // readonly path: string;
+    private readonly id: string;
+    get path(): string {
+        return this.parent.path + "/" + this.collection + "/" + this.id;
+    }
     version: number = 0;
 
-    verifyKey?: VerifyKey<T>;
+    verifyKey?: VerifyKey;
+    // you can store the secret key of an object encrypted by different keys
+    encryptedSecretKey: { [path: string]: string } = {};
 
-    // secretKey?: EncryptedProperty<Parent, SecretKey<T>>;
-
-    constructor(parent: P) {
+    constructor(parent: P, id: string = AutoId.newId()) {
         this.parent = parent;
+        // this.path = parent.path + "/" + (this as any).collection + "/" + id; 
+        this.id = id;
 
         let current: DatabaseObjectType = this;
-        for (; !App.isApp(current.parent) && !current._parentIsOwner; current = current.parent);
+        for (; !App.isApp(current.parent) && !current.parentIsOwner; current = current.parent);
         this.owner = current.parent as GetOwner<T>;
     }
 
-    // private
-    getPath(): string {
-        let path: string = "";
-        for (let current: DatabaseObjectType | App = this; !App.isApp(current); current = current.parent) {
-            path = "/" + current._collection + "/" + current.id + path;
-        }
-        return path;
+    async toFirestore(keystore: KeyStore): Promise<{ [key: string]: any }> {
+        let documentData: any = {};
+        await Promise.all(Object.keys(this).map(async k => {
+            if (this.ignoreProperties.indexOf(k) == -1)
+                if (this.encryptedProperties?.indexOf(k) != -1)
+                    documentData[k] = await keystore.encrypt(this, (this as { [key: string]: any })[k]);
+                else
+                    documentData[k] = (this as { [key: string]: any })[k];
+        }));
+        console.log("encrypted", documentData);
+        // TODO test if encrypted properties are there
+        return await keystore.sign(this.owner, documentData);
     }
 
-    static converter<T extends DatabaseObjectType>(this: new (parent: T["parent"]) => T, parent: T["parent"], path: string) {
-        let constructor = this;
-        return {
-            // result will be sent to firebase cloud functions
-            toFirestore<T>(databaseObject: T): firestore.DocumentData {
-                // TODO throw error if id is undefined
-                let documentData = { ...databaseObject, parent: undefined };
-                // documentData.signature = "";
-                // TODO test if _type is present
-                return documentData;
-            },
-            // executed on client
-            fromFirestore(snapshot: firestore.QueryDocumentSnapshot, options: firestore.SnapshotOptions): T {
-                const data = snapshot.data(options)!;
-                return new constructor(parent);
-            }
-        };
-    }
+    // static converter<T extends DatabaseObjectType>(this: new (parent: T["parent"]) => T, parent: T["parent"], keystore: KeyStore) {
+    //     let constructor = this;
+    //     return {
+    //         // result will be sent to firebase cloud functions
+    //         toFirestore<T>(databaseObject: T): firestore.DocumentData {
+    //             let ignoreProperties = ["parentIsOwner", "collection", "encryptedProperties", "parent", "owner"];
+
+    //             let documentData = {};
+    //             Object.keys(databaseObject).forEach(k => {
+    //                 if (ignoreProperties.indexOf(k) != -1)
+    //                     doc
+    //             });
+    //             // documentData.signature = "";
+    //             // TODO test if _type is present
+    //             return documentData;
+    //         },
+    //         // executed on client
+    //         fromFirestore(snapshot: firestore.QueryDocumentSnapshot, options: firestore.SnapshotOptions): T {
+
+    //             const data = snapshot.data(options)!;
+    //             keystore.sign(owner, new constructor(parent))
+    //             return new constructor(parent);
+    //         }
+    //     };
+    // }
 }
