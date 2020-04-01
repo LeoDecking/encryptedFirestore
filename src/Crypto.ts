@@ -7,35 +7,50 @@ import { SignKey, VerifyKey, SecretKey } from "./Key";
 export class Crypto {
 
 
-    public static sign(object: any, signKey: SignKey): string {
-        return base64.encode(nacl.sign.detached(utf8.encode(JSON.stringify(object)), signKey.uint8Array));
+    static sign(object: any, signKey: SignKey): string {
+        console.log("sign",Crypto.sortObject(object),base64.encode(nacl.sign.detached(utf8.encode(JSON.stringify(Crypto.sortObject(object))), signKey.uint8Array)))
+        return base64.encode(nacl.sign.detached(utf8.encode(JSON.stringify(Crypto.sortObject(object))), signKey.uint8Array));
     }
 
-    public static verify(object: any, signature: string, verifyKey: VerifyKey): boolean {
+    static verify(object: any, signature: string, verifyKey: VerifyKey): boolean {
         try {
-            return nacl.sign.detached.verify(utf8.encode(JSON.stringify(object)), base64.decode(object.signature), verifyKey.uint8Array);
+            console.log("verify", Crypto.sortObject(object), signature, verifyKey, nacl.sign.detached.verify(utf8.encode(JSON.stringify(Crypto.sortObject(object))), base64.decode(signature), verifyKey.uint8Array));
+            return nacl.sign.detached.verify(utf8.encode(JSON.stringify(Crypto.sortObject(object))), base64.decode(signature), verifyKey.uint8Array);
         } catch {
             return false;
         }
     }
 
-    public static encrypt(object: any, secretKey: SecretKey): string {
+    static encrypt(object: any, secretKey: SecretKey): string {
         try {
             let nonce: Uint8Array = nacl.randomBytes(24);
-            return base64.encode(nonce) + base64.encode(nacl.secretbox(utf8.encode(JSON.stringify(object)), nonce, secretKey.uint8Array));
+            return base64.encode(nonce) + base64.encode(nacl.secretbox(utf8.encode(JSON.stringify(Crypto.sortObject(object))), nonce, secretKey.uint8Array));
         } catch { return ""; }
     }
 
-    public static decrypt(encryptedObject: string, secretKey: SecretKey): any {
+    static decrypt(encryptedObject: string, secretKey: SecretKey): any {
         try {
             let uint8array = nacl.secretbox.open(base64.decode(encryptedObject.substr(32)), base64.decode(encryptedObject.substr(0, 32)), secretKey.uint8Array);
             if (!uint8array) return undefined;
-            else return JSON.parse(utf8.decode(uint8array));
+            else return Crypto.sortObject(JSON.parse(utf8.decode(uint8array)));
         } catch { return undefined; }
     }
 
-    public static hash(object: any): string {
-        return base64.encode(nacl.hash(utf8.encode(JSON.stringify(object))));
+    static hash(object: any): string {
+        return base64.encode(nacl.hash(utf8.encode(JSON.stringify(Crypto.sortObject(object)))));
+    }
+
+    static sortObject(object: any) {
+        if (Array.isArray(object)) {
+            for (let i = 0; i < object.length; i++) object[i] = Crypto.sortObject(object[i]);
+            return object;
+        }
+        if (typeof object == "object") {
+            let newObject: { [key: string]: any } = {};
+            Object.keys(object).sort().forEach(k => newObject[k] = Crypto.sortObject(object[k]));
+            return newObject;
+        }
+        return object;
     }
 
 }

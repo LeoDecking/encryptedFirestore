@@ -9,19 +9,17 @@ class Key<K extends string> {
 
     // TODO warum so viele neue keys?
     constructor(key: string | Uint8Array) {
-        console.log("New key", key);
         this.string = typeof key == "string" ? key : base64.encode(key);
         this.uint8Array = typeof key == "string" ? base64.decode(key) : key;
-        console.log("New key",key,this);
     }
 
     encrypt(secretKey: SecretKey): string {
-        console.log("encrypt", this, secretKey, "=>", Crypto.encrypt(this.string, secretKey));
+        // console.log("encrypt", this, secretKey, "=>", Crypto.encrypt(this.string, secretKey));
         return Crypto.encrypt(this.string, secretKey);
     }
 
     static decrypt<K>(this: new (key: string | Uint8Array) => K, encryptedKey: string, secretKey: SecretKey): K {
-        console.log("decrypt", encryptedKey, secretKey, "=>", Crypto.decrypt(encryptedKey, secretKey), new this(Crypto.decrypt(encryptedKey, secretKey)));
+        // console.log("decrypt", encryptedKey, secretKey, "=>", Crypto.decrypt(encryptedKey, secretKey), new this(Crypto.decrypt(encryptedKey, secretKey)));
         return new this(Crypto.decrypt(encryptedKey, secretKey));
     }
 }

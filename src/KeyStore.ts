@@ -72,7 +72,7 @@ export class KeyStore {
 
     verify<T extends DatabaseObjectType>(owner: DatabaseObjectType | App, object: T & { signature: string }): T {
         if (!owner.verifyKey) throw new Error("no verifkey");
-        if (Crypto.verify(object, object.signature, owner.verifyKey!))
+        if (Crypto.verify({ ...object, signature: undefined }, object.signature, owner.verifyKey!))
             return { ...object, signature: undefined };
         else
             throw new Error("wrong signature");

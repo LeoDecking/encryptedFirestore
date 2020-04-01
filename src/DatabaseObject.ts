@@ -7,13 +7,17 @@ import { KeyStore } from "./KeyStore";
 
 export abstract class DatabaseObject<Tstring extends string, T extends DatabaseObjectType, P extends DatabaseObjectType | App, ParentIsOwner extends boolean = true> {
     private _type?: Tstring;
-    private readonly ignoreProperties = ["ignoreProperties", "parentIsOwner", "collection", "encryptedProperties", "id", "parent", "owner"];
+    private readonly ignoreProperties = ["ignoreProperties", "parentIsOwner", "collection", "encryptedProperties", "id", "parent"];
+    // TODO derivedIgnoreProperties
     abstract readonly parentIsOwner: ParentIsOwner;
     abstract readonly collection: string;
     abstract readonly encryptedProperties: string[];
 
     readonly parent: P;
-    readonly owner: GetOwner<T>;
+    get owner(): GetOwner<T> {
+        return (App.isApp(this.parent) || this.parentIsOwner ? this.parent : (this.parent as DatabaseObjectType).owner) as GetOwner<T>;
+    }
+
 
 
     // readonly path: string;
@@ -28,52 +32,33 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     encryptedSecretKey: { [path: string]: string } = {};
 
     constructor(parent: P, id: string = AutoId.newId()) {
-        this.parent = parent;
-        // this.path = parent.path + "/" + (this as any).collection + "/" + id; 
         this.id = id;
-
-        let current: DatabaseObjectType = this;
-        for (; !App.isApp(current.parent) && !current.parentIsOwner; current = current.parent);
-        this.owner = current.parent as GetOwner<T>;
+        this.parent = parent;
     }
 
     async toFirestore(keystore: KeyStore): Promise<{ [key: string]: any }> {
+        console.log("toFirestore", this);
+
         let documentData: any = {};
         await Promise.all(Object.keys(this).map(async k => {
+            // console.log("property", k, (this as { [key: string]: any })[k]);
             if (this.ignoreProperties.indexOf(k) == -1)
-                if (this.encryptedProperties?.indexOf(k) != -1)
+                if (this.encryptedProperties?.indexOf(k) != -1) {
+                    // console.log("encrypt property", k, await keystore.encrypt(this, (this as { [key: string]: any })[k]));
                     documentData[k] = await keystore.encrypt(this, (this as { [key: string]: any })[k]);
-                else
+                }
+                else {
+                    // console.log("not encrypted property", k)
                     documentData[k] = (this as { [key: string]: any })[k];
+                }
+            // else console.log("ignore property", k);
         }));
-        console.log("encrypted", documentData);
+        documentData["path"] = this.path;
+        if (this.verifyKey) documentData["verifyKey"] = this.verifyKey?.string;
+
+        // console.log("encrypted", documentData);
+        console.log("signed", await keystore.sign(this.owner, documentData));
         // TODO test if encrypted properties are there
         return await keystore.sign(this.owner, documentData);
     }
-
-    // static converter<T extends DatabaseObjectType>(this: new (parent: T["parent"]) => T, parent: T["parent"], keystore: KeyStore) {
-    //     let constructor = this;
-    //     return {
-    //         // result will be sent to firebase cloud functions
-    //         toFirestore<T>(databaseObject: T): firestore.DocumentData {
-    //             let ignoreProperties = ["parentIsOwner", "collection", "encryptedProperties", "parent", "owner"];
-
-    //             let documentData = {};
-    //             Object.keys(databaseObject).forEach(k => {
-    //                 if (ignoreProperties.indexOf(k) != -1)
-    //                     doc
-    //             });
-    //             // documentData.signature = "";
-    //             // TODO test if _type is present
-    //             return documentData;
-    //         },
-    //         // executed on client
-    //         fromFirestore(snapshot: firestore.QueryDocumentSnapshot, options: firestore.SnapshotOptions): T {
-
-    //             const data = snapshot.data(options)!;
-    //             keystore.sign(owner, new constructor(parent))
-    //             return new constructor(parent);
-    //         }
-    //     };
-    // }
 }
