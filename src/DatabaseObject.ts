@@ -1,4 +1,3 @@
-import { firestore } from "firebase";
 import { AutoId } from "./AutoId";
 import { VerifyKey } from "./Key";
 import { DatabaseObjectType, GetOwner } from "./DatabaseObjectType";
