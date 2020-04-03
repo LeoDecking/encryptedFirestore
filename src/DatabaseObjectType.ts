@@ -2,6 +2,7 @@ import { DatabaseObject } from "./DatabaseObject";
 import { App } from "./App";
 
 export type DatabaseObjectType = DatabaseObject<string, DatabaseObjectType, DatabaseObjectType | App, boolean>;
+export type DatabaseChildObjectType<T extends DatabaseObjectType | App> = DatabaseObject<string, DatabaseObjectType, T , boolean>;
 
 export type GetOwner<T extends DatabaseObjectType> = T["parentIsOwner"] extends true ? T["parent"] : GetOwner2<Exclude<T["parent"], App>>;
 type GetOwner2<T extends DatabaseObjectType> = T["parentIsOwner"] extends true ? T["parent"] : GetOwner3<Exclude<T["parent"], App>>;
