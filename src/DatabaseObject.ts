@@ -19,9 +19,6 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         return (App.isApp(this.parent) || this.parentIsOwner ? this.parent : (this.parent as DatabaseObjectType).owner) as GetOwner<T>;
     }
 
-
-
-    // readonly path: string;
     private readonly id: string;
     get path(): string {
         return this.parent.path + "/" + this.collection + "/" + this.id;
@@ -36,6 +33,10 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         this.id = id;
         this.parent = parent;
         this.app = App.isApp(parent) ? parent : (parent as DatabaseObjectType).app;
+    }
+
+    newChild<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, id?: string): C {
+        return new child(this, id);
     }
 
     async uploadToFirestore(): Promise<void> {
@@ -68,11 +69,43 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         if (result.data !== true) throw new Error("unkown error");
     }
 
-    static async fromFirestore<T extends DatabaseObjectType>(this: new (parent: T["parent"], id: string) => T, parent: T["parent"], id: string): Promise<T> {
-        let object = new this(parent, id);
-        let documentData: { [key: string]: any } = object.app.keyStore.verify(object.owner, (await object.app.firebase.firestore().doc(object.path).get({ source: "server" })).data() as T & { signature: string });
-        console.log("object", object);
-        console.log(documentData, documentData);
+    async a() {
+        let b = await Job.collectionFromFirestore(null,[],()=>alert(42)).
+        b
+    }
+
+    // TODO realtime in anyy method
+    
+    static async fromFirestore<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], id: string): Promise<T> {
+        let dummy = new this(parent, id);
+        let documents = await DatabaseObject.collectionFromFirestore.call(this, parent, [{ fieldPath: "path", opStr: "==", value: dummy.path }]);
+        if (documents.length != 1) throw new Error("document not found");
+        return documents[0] as T;
+    }
+
+    static async collectionFromFirestore<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[]): Promise<T[]>;
+    static async collectionFromFirestore<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[], onSnapshot: (objs: { obj: T, change?: firebase.firestore.DocumentChange<firebase.firestore.DocumentData> }[]) => void): Promise<(() => void)>;
+    static async collectionFromFirestore<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[] = [], onSnapshot?: (objs: { obj: T, change?: firebase.firestore.DocumentChange<firebase.firestore.DocumentData> }[]) => void): Promise<T[] | (() => void)> {
+        let dummy = new this(parent);
+
+        let query: firebase.firestore.CollectionReference<firebase.firestore.DocumentData> | firebase.firestore.Query<firebase.firestore.DocumentData>
+            = dummy.app.firebase.firestore().collection(parent.path + "/" + dummy.collection);
+        queries.forEach(q => query = query.where(q.fieldPath, q.opStr, q.value));
+
+        if (!onSnapshot)
+            return await Promise.all((await query.get({ source: "server" })).docs.map(d => DatabaseObject.getObjectFromDocument.call(this, parent, d) as Promise<T>)) as T[];
+        else
+            return query.onSnapshot(async s => {
+                let changes = s.docChanges();
+                onSnapshot((await Promise.all(s.docs.map(d => DatabaseObject.getObjectFromDocument.call(this, parent, d)))).map(o => ({ obj: o as T, change: changes.find(c => c.doc.id == o.id) })));
+            }) as (() => void);
+    }
+
+    private static async getObjectFromDocument<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], document: firebase.firestore.QueryDocumentSnapshot<firebase.firestore.DocumentData>): Promise<T> {
+        let object = new this(parent, document.id);
+        let documentData: { [key: string]: any } = object.app.keyStore.verify(object.owner, document.data() as T & { signature: string });
+        if (documentData.path != object.path) throw new Error("wrong path: " + object.path);
+
         await Promise.all(Object.keys(object).map(async k => {
             if (object.ignoreProperties.indexOf(k) == -1)
                 if (object.encryptedProperties?.indexOf(k) != -1) {
@@ -87,10 +120,14 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         }));
         if (documentData.verifyKey) object.verifyKey = new VerifyKey(documentData.verifyKey);
 
-        return object;
+        return object as T;
     }
 
-    childFromFirestore<C extends DatabaseChildObjectType<T>>(child: new (parent: T, id: string) => C, id: string): Promise<C> {
+    childFromFirestore<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, id: string): Promise<C> {
         return DatabaseObject.fromFirestore.call(child as any, this, id) as Promise<C>;
+    }
+
+    childrenFromFirestore<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[] = []): Promise<C[]> {
+        return DatabaseObject.collectionFromFirestore.call(child as any, this, queries) as Promise<C[]>;
     }
 }
