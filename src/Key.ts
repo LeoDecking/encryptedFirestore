@@ -1,4 +1,5 @@
 import * as base64 from "@stablelib/base64";
+import * as utf8 from "@stablelib/utf8";
 import { Crypto } from "./Crypto";
 import nacl from "tweetnacl";
 
@@ -31,13 +32,29 @@ export class SignKey extends Key<"sign"> {
         this.verifyKey = new VerifyKey(nacl.sign.keyPair.fromSecretKey(this.uint8Array).publicKey);
     }
 
-    static generate(): SignKey {
+    static generate(): SignKey;
+    static generate(password: string, salt: string): Promise<SignKey>;
+    static generate(password?: string, salt?: string): SignKey | Promise<SignKey> {
+        if (password && salt) {
+            return (window as any).argon2.hash({ pass: utf8.encode(password), salt: utf8.encode("42234223" + salt), hashLen: 32, mem: 131072, time: 1, parallelism: 1, type: (window as any).argon2.ArgonType.Argon2id })
+                .then((result: { hash: Uint8Array }) => Promise.resolve(new SignKey(nacl.sign.keyPair.fromSeed(result.hash).secretKey)))
+                .catch(() => Promise.reject("error while generating key"));
+        }
+
         return new SignKey(nacl.randomBytes(64));
     }
 }
 export class VerifyKey extends Key<"verify"> { }
 export class SecretKey extends Key<"secret"> {
-    static generate(): SignKey {
-        return new SignKey(nacl.randomBytes(32));
+    static generate(): SecretKey;
+    static generate(password: string, salt: string): Promise<SecretKey>;
+    static generate(password?: string, salt?: string): SecretKey | Promise<SecretKey> {
+        if (password && salt) {
+            return (window as any).argon2.hash({ pass: utf8.encode(password), salt: utf8.encode("42234223" + salt), hashLen: 32, mem: 131072, time: 1, parallelism: 1, type: (window as any).argon2.ArgonType.Argon2id })
+                .then((result: { hash: Uint8Array }) => Promise.resolve(new SecretKey(result.hash)))
+                .catch(() => Promise.reject("error while generating key"));
+        }
+
+        return new SecretKey(nacl.randomBytes(32));
     }
 }

@@ -10,7 +10,7 @@ export class Crypto {
 
 
     static sign(object: any, signKey: SignKey): string {
-        console.log("sign", Crypto.sortObject(object), base64.encode(nacl.sign.detached(utf8.encode(JSON.stringify(Crypto.sortObject(object))), signKey.uint8Array)))
+        console.log("sign", Crypto.sortObject(object), signKey, base64.encode(nacl.sign.detached(utf8.encode(JSON.stringify(Crypto.sortObject(object))), signKey.uint8Array)))
         return base64.encode(nacl.sign.detached(utf8.encode(JSON.stringify(Crypto.sortObject(object))), signKey.uint8Array));
     }
 
@@ -35,7 +35,7 @@ export class Crypto {
             let uint8array = nacl.secretbox.open(base64.decode(encryptedObject.substr(32)), base64.decode(encryptedObject.substr(0, 32)), secretKey.uint8Array);
             if (!uint8array) return undefined;
             else return Crypto.sortObject(JSON.parse(utf8.decode(uint8array)));
-        } catch { return undefined; }
+        } catch { throw new Error("error while decrypting"); }
     }
 
     static hash(object: any): string {
@@ -45,7 +45,7 @@ export class Crypto {
     static sortObject(object: any) {
         if (object == null) return null;
         if (object == undefined) return undefined;
-        
+
         if (Array.isArray(object)) {
             for (let i = 0; i < object.length; i++) object[i] = Crypto.sortObject(object[i]);
             return object;

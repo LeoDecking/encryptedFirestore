@@ -2,17 +2,22 @@ import { AutoId } from "./AutoId";
 import { VerifyKey, SignKey, SecretKey } from "./Key";
 import { DatabaseObjectType, GetOwner, DatabaseChildObjectType } from "./DatabaseObjectType";
 import { App } from "./App";
+import { Crypto } from "./Crypto";
 
+// Every property must be default initialized!
 export abstract class DatabaseObject<Tstring extends string, T extends DatabaseObjectType, P extends DatabaseObjectType | App, ParentIsOwner extends boolean = true> {
     private _type?: Tstring;
     abstract readonly databaseOptions: {
         parentIsOwner: ParentIsOwner,
         collection: string,
+        // TODO useless?
         canSign: boolean,
+        ownerMayRead: boolean,
+        ownerMayWrite: boolean,
         encryptedProperties?: string[]
 
     };
-    private readonly ignoreProperties = ["ignoreProperties", "id", "app", "parent", "verifyKey"];
+    private readonly ignoreProperties = ["databaseOptions", "ignoreProperties", "id", "app", "parent", "verifyKey"];
 
     readonly app: App;
     readonly parent: P;
@@ -22,7 +27,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     get path(): string { return this.parent.path + "/" + this.databaseOptions.collection + "/" + this.id; }
     version: number = 0;
 
-    keyHash?: string;
+    keyHash: string = "";
     verifyKey?: VerifyKey;
     // you can store the secret key of an object encrypted by different keys
     encryptedSecretKey: { [path: string]: string } = {};
@@ -41,9 +46,34 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         return object;
     }
 
-    setSecretKey(keyOrPassword?: SecretKey | string) {
-        
+    // TODO setKeys (all)
+    async setSecretKey(keyOrPassword?: SecretKey | string) {
+        let secretKey: SecretKey
+        if (keyOrPassword == undefined) secretKey = SecretKey.generate();
+        else if (typeof keyOrPassword == "string") secretKey = await SecretKey.generate(keyOrPassword, this.path);
+        else secretKey = keyOrPassword as SecretKey;
+
+        this.keyHash = Crypto.hash(secretKey.string);
+        if (this.databaseOptions.ownerMayRead && !App.isApp(this.parent))
+            this.encryptedSecretKey[this.owner.path] = await this.app.keyStore.encrypt(this.owner as DatabaseObjectType, secretKey.string);
+
+        return this;
     }
+
+    async setSignKey(keyOrPassword?: SecretKey | string) {
+        let signKey: SignKey;
+        if (keyOrPassword == undefined) signKey = SignKey.generate();
+        else if (typeof keyOrPassword == "string") signKey = await SignKey.generate(keyOrPassword, this.path);
+        else signKey = keyOrPassword as SignKey;
+
+        this.verifyKey = signKey.verifyKey;
+        // TODO encrypt verifykey for owner
+        // if (this.databaseOptions.ownerMayWrite && !App.isApp(this.owner))
+        //     this.encryptedSecretKey[this.owner.path] = await this.app.keyStore.encrypt(this.owner as DatabaseObjectType, secretKey.string);
+
+        return this;
+    }
+
     newChild<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, id?: string): C {
         return new child(this, id);
     }

@@ -1,8 +1,8 @@
 import firebase from "firebase/app";
 import { VerifyKey } from "./Key";
 import { DatabaseObjectType, DatabaseChildObjectType } from "./DatabaseObjectType";
-import { DatabaseObject } from ".";
 import { KeyStore } from "./KeyStore";
+import { DatabaseObject } from "./DatabaseObject";
 
 const AppSymbol = Symbol();
 export class App {

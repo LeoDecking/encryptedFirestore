@@ -3,6 +3,7 @@ import { DatabaseObjectType } from "./DatabaseObjectType";
 import { App } from "./App";
 import { Crypto } from "./Crypto";
 
+// TODO has key
 export class KeyStore {
     // keys are still encrypeted with storageKeySecret/storageKeySign
     private keys: { [path: string]: { signKey?: string, secretKey?: string } };
@@ -38,7 +39,7 @@ export class KeyStore {
             if (this.keys[object.path]?.secretKey) { console.log(1, SecretKey.decrypt(this.keys[object.path].secretKey!, storageKeySecret)); return SecretKey.decrypt(this.keys[object.path]?.secretKey!, storageKeySecret); }
             else {
                 let path = Object.keys(object.encryptedSecretKey).find(p => this.keys[p]?.secretKey);
-                if (path) { console.log(2); return Crypto.decrypt(object.encryptedSecretKey[path], SecretKey.decrypt(this.keys[path].secretKey!, storageKeySecret)); }
+                if (path) { console.log(2); return SecretKey.decrypt(object.encryptedSecretKey[path], SecretKey.decrypt(this.keys[path].secretKey!, storageKeySecret)); }
                 else {
                     let current: DatabaseObjectType = object;
                     // TODO nochmal drüber nachdenken
@@ -46,7 +47,7 @@ export class KeyStore {
                         current = current.owner;
                         if (object.encryptedSecretKey[current.path]) {
                             console.log("owner", current);
-                            return Crypto.decrypt(object.encryptedSecretKey[current.path], await this.getSecretKey(current, storageKeySecretPromise));
+                            return SecretKey.decrypt(object.encryptedSecretKey[current.path], await this.getSecretKey(current, storageKeySecretPromise));
                         }
                     }
                 }
