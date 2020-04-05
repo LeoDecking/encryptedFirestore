@@ -1,28 +1,28 @@
 import { AutoId } from "./AutoId";
-import { VerifyKey } from "./Key";
+import { VerifyKey, SignKey, SecretKey } from "./Key";
 import { DatabaseObjectType, GetOwner, DatabaseChildObjectType } from "./DatabaseObjectType";
 import { App } from "./App";
 
 export abstract class DatabaseObject<Tstring extends string, T extends DatabaseObjectType, P extends DatabaseObjectType | App, ParentIsOwner extends boolean = true> {
     private _type?: Tstring;
-    private readonly ignoreProperties = ["ignoreProperties", "parentIsOwner", "collection", "encryptedProperties", "id", "app", "parent", "verifyKey"];
-    // TODO derivedIgnoreProperties
-    abstract readonly parentIsOwner: ParentIsOwner;
-    abstract readonly collection: string;
-    abstract readonly encryptedProperties: string[];
+    abstract readonly databaseOptions: {
+        parentIsOwner: ParentIsOwner,
+        collection: string,
+        canSign: boolean,
+        encryptedProperties?: string[]
+
+    };
+    private readonly ignoreProperties = ["ignoreProperties", "id", "app", "parent", "verifyKey"];
 
     readonly app: App;
     readonly parent: P;
-    get owner(): GetOwner<T> {
-        return (App.isApp(this.parent) || this.parentIsOwner ? this.parent : (this.parent as DatabaseObjectType).owner) as GetOwner<T>;
-    }
+    get owner(): GetOwner<T> { return (App.isApp(this.parent) || this.databaseOptions.parentIsOwner ? this.parent : (this.parent as DatabaseObjectType).owner) as GetOwner<T>; }
 
     readonly id: string;
-    get path(): string {
-        return this.parent.path + "/" + this.collection + "/" + this.id;
-    }
+    get path(): string { return this.parent.path + "/" + this.databaseOptions.collection + "/" + this.id; }
     version: number = 0;
 
+    keyHash?: string;
     verifyKey?: VerifyKey;
     // you can store the secret key of an object encrypted by different keys
     encryptedSecretKey: { [path: string]: string } = {};
@@ -41,6 +41,9 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         return object;
     }
 
+    setSecretKey(keyOrPassword?: SecretKey | string) {
+        
+    }
     newChild<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, id?: string): C {
         return new child(this, id);
     }
@@ -53,7 +56,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
             // console.log("property", k, (this as { [key: string]: any })[k]);
             if (this.ignoreProperties.indexOf(k) == -1)
                 // TODO sub-properties
-                if (this.encryptedProperties?.indexOf(k) != -1) {
+                if (this.databaseOptions.encryptedProperties?.indexOf(k) != -1) {
                     // console.log("encrypt property", k, await keystore.encrypt(this, (this as { [key: string]: any })[k]));
                     documentData[k] = await this.app.keyStore.encrypt(this, (this as { [key: string]: any })[k]);
                 }
@@ -112,7 +115,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         let dummy = new this(parent);
 
         let query: firebase.firestore.CollectionReference<firebase.firestore.DocumentData> | firebase.firestore.Query<firebase.firestore.DocumentData>
-            = dummy.app.firebase.firestore().collection(parent.path + "/" + dummy.collection);
+            = dummy.app.firebase.firestore().collection(parent.path + "/" + dummy.databaseOptions.collection);
         queries.forEach(q => query = query.where(q.fieldPath, q.opStr, q.value));
 
         if (!onSnapshot)
@@ -136,7 +139,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         await Promise.all(Object.keys(object).map(async k => {
             if (object.ignoreProperties.indexOf(k) == -1)
                 // TODO sub-properties
-                if (object.encryptedProperties?.indexOf(k) != -1) {
+                if (object.databaseOptions.encryptedProperties?.indexOf(k) != -1) {
                     // TODO undefined properties
                     (object as { [key: string]: any })[k] = await object.app.keyStore.decrypt(object, documentData[k]);
                 }

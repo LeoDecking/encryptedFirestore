@@ -4,6 +4,8 @@ import * as utf8 from "@stablelib/utf8";
 import * as base64 from "@stablelib/base64";
 import { SignKey, VerifyKey, SecretKey } from "./Key";
 
+// TODO https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto
+
 export class Crypto {
 
 

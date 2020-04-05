@@ -41,7 +41,7 @@ export class KeyStore {
                 if (path) { console.log(2); return Crypto.decrypt(object.encryptedSecretKey[path], SecretKey.decrypt(this.keys[path].secretKey!, storageKeySecret)); }
                 else {
                     let current: DatabaseObjectType = object;
-                    // TODO direkt getSecretKey vom owner, dort wird ja rekursiv weiter geguckt...
+                    // TODO nochmal drüber nachdenken
                     while (!App.isApp(current.owner)) {
                         current = current.owner;
                         if (object.encryptedSecretKey[current.path]) {
@@ -72,9 +72,9 @@ export class KeyStore {
     }
 
     verify<T extends DatabaseObjectType>(owner: DatabaseObjectType | App, object: T & { signature: string }): T {
-        if(!object) throw new Error("undefined object");
+        if (!object) throw new Error("undefined object");
         if (!owner.verifyKey) throw new Error("no verifykey");
-        let o = {...object};
+        let o = { ...object };
         delete o.signature;
         if (Crypto.verify(o, object.signature, owner.verifyKey!))
             return o;
