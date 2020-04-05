@@ -41,6 +41,7 @@ export class KeyStore {
                 if (path) { console.log(2); return Crypto.decrypt(object.encryptedSecretKey[path], SecretKey.decrypt(this.keys[path].secretKey!, storageKeySecret)); }
                 else {
                     let current: DatabaseObjectType = object;
+                    // TODO direkt getSecretKey vom owner, dort wird ja rekursiv weiter geguckt...
                     while (!App.isApp(current.owner)) {
                         current = current.owner;
                         if (object.encryptedSecretKey[current.path]) {

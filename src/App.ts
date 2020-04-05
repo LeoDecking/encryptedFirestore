@@ -24,6 +24,9 @@ export class App {
         return (parent as App)[AppSymbol] == true;
     }
 
+    newChild<C extends DatabaseChildObjectType<App>>(child: new (parent: App, id?: string) => C, id?: string): C {
+        return new child(this, id);
+    }
 
     childFromFirestore<C extends DatabaseChildObjectType<App>>(child: new (parent: App, id?: string) => C, id: string): Promise<C>;
     childFromFirestore<C extends DatabaseChildObjectType<App>>(child: new (parent: App, id?: string) => C, id: string, onSnapshot: (object: C) => void): () => void;

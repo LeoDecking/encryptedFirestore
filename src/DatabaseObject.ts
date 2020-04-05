@@ -2,8 +2,6 @@ import { AutoId } from "./AutoId";
 import { VerifyKey } from "./Key";
 import { DatabaseObjectType, GetOwner, DatabaseChildObjectType } from "./DatabaseObjectType";
 import { App } from "./App";
-import { KeyStore } from "./KeyStore";
-import { Job, City, AppApp } from "./Job";
 
 export abstract class DatabaseObject<Tstring extends string, T extends DatabaseObjectType, P extends DatabaseObjectType | App, ParentIsOwner extends boolean = true> {
     private _type?: Tstring;
@@ -19,7 +17,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         return (App.isApp(this.parent) || this.parentIsOwner ? this.parent : (this.parent as DatabaseObjectType).owner) as GetOwner<T>;
     }
 
-    private readonly id: string;
+    readonly id: string;
     get path(): string {
         return this.parent.path + "/" + this.collection + "/" + this.id;
     }
@@ -29,10 +27,18 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     // you can store the secret key of an object encrypted by different keys
     encryptedSecretKey: { [path: string]: string } = {};
 
+    // TODO keygeneration
     constructor(parent: P, id: string = AutoId.newId()) {
         this.id = id;
         this.parent = parent;
         this.app = App.isApp(parent) ? parent : (parent as DatabaseObjectType).app;
+    }
+
+    // TODO without constructor
+    clone(constructor: new (parent: P, id?: string) => T): T {
+        let object = new constructor(this.parent, this.id) as T;
+        Object.keys(this).forEach(k => (object as { [key: string]: any })[k] = (this as { [key: string]: any })[k]);
+        return object;
     }
 
     newChild<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, id?: string): C {
@@ -46,6 +52,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         await Promise.all(Object.keys(this).map(async k => {
             // console.log("property", k, (this as { [key: string]: any })[k]);
             if (this.ignoreProperties.indexOf(k) == -1)
+                // TODO sub-properties
                 if (this.encryptedProperties?.indexOf(k) != -1) {
                     // console.log("encrypt property", k, await keystore.encrypt(this, (this as { [key: string]: any })[k]));
                     documentData[k] = await this.app.keyStore.encrypt(this, (this as { [key: string]: any })[k]);
@@ -70,7 +77,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
     async delete(): Promise<void> {
         console.log("delete", this);
-        if(this.version == 0) throw new Error("trying to delete 0 version");
+        if (this.version == 0) throw new Error("trying to delete 0 version");
 
         let documentData: any = {
             path: this.path,
@@ -128,6 +135,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
         await Promise.all(Object.keys(object).map(async k => {
             if (object.ignoreProperties.indexOf(k) == -1)
+                // TODO sub-properties
                 if (object.encryptedProperties?.indexOf(k) != -1) {
                     // TODO undefined properties
                     (object as { [key: string]: any })[k] = await object.app.keyStore.decrypt(object, documentData[k]);
