@@ -42,19 +42,23 @@ export class Crypto {
         return base64.encode(nacl.hash(utf8.encode(JSON.stringify(Crypto.sortObject(object)))));
     }
 
-    static sortObject(object: any) {
+    static sortObject(object: any, parseDate: boolean = false): any {
         if (object == null) return null;
         if (object == undefined) return undefined;
+        if (object instanceof Date) return object;
 
         if (Array.isArray(object)) {
-            for (let i = 0; i < object.length; i++) object[i] = Crypto.sortObject(object[i]);
-            return object;
+            let newObject = [];
+            for (let i = 0; i < object.length; i++) newObject[i] = Crypto.sortObject(object[i], parseDate);
+            return newObject;
         }
         if (typeof object == "object") {
             let newObject: { [key: string]: any } = {};
-            Object.keys(object).sort().forEach(k => newObject[k] = Crypto.sortObject(object[k]));
+            Object.keys(object).sort().forEach(k => newObject[k] = Crypto.sortObject(object[k], parseDate));
             return newObject;
         }
+        if (parseDate && typeof object == "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(object)) return new Date(object);
+
         return object;
     }
 

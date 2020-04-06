@@ -42,7 +42,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     // TODO without constructor
     clone(constructor: new (parent: P, id?: string) => T): T {
         let object = new constructor(this.parent, this.id) as T;
-        Object.keys(this).forEach(k => (object as { [key: string]: any })[k] = (this as { [key: string]: any })[k]);
+        Object.keys(this).forEach(k => (object as { [key: string]: any })[k] = (this.ignoreProperties.indexOf(k) == -1) ? Crypto.sortObject((this as { [key: string]: any })[k]) : (this as { [key: string]: any })[k]);
         return object;
     }
 
@@ -104,7 +104,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         console.log("signed", await this.app.keyStore.sign(this.owner, documentData));
         let signedObject = await this.app.keyStore.sign(this.owner, documentData);
 
-        let result = await this.app.firebase.functions("europe-west3").httpsCallable("setDocument")(signedObject);
+        let result = await this.app.firebase.functions("europe-west3").httpsCallable("setDocument")(JSON.stringify(signedObject));
         if (result.data !== true) throw new Error("unkown error");
     }
 
@@ -120,7 +120,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         console.log("signed", await this.app.keyStore.sign(this.owner, documentData));
         let signedObject = await this.app.keyStore.sign(this.owner, documentData);
 
-        let result = await this.app.firebase.functions("europe-west3").httpsCallable("setDocument")(signedObject);
+        let result = await this.app.firebase.functions("europe-west3").httpsCallable("setDocument")(JSON.stringify(signedObject));
         if (result.data !== true) throw new Error("unkown error");
     }
 
@@ -171,11 +171,11 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
                 // TODO sub-properties
                 if (object.databaseOptions.encryptedProperties?.indexOf(k) != -1) {
                     // TODO undefined properties
-                    (object as { [key: string]: any })[k] = await object.app.keyStore.decrypt(object, documentData[k]);
+                    (object as { [key: string]: any })[k] = Crypto.sortObject(await object.app.keyStore.decrypt(object, documentData[k]), true);
                 }
                 else {
                     // console.log("not encrypted property", k)
-                    (object as { [key: string]: any })[k] = documentData[k];
+                    (object as { [key: string]: any })[k] = Crypto.sortObject(documentData[k], true);
                 }
             // else console.log("ignore property", k);
         }));
