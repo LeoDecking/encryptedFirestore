@@ -30,16 +30,22 @@ export class KeyStore {
     // 2. SecretKey verlinkt, der im KeyStore gespeichert ist
     // 3. SecrentKey vom nächstbesten Parent verlinkt (nur der "niedrigste" Parent, der verlinkt ist, wird betrachtet), auf den 1. oder 2. oder 3. zutrifft
     private async getSecretKey(object: DatabaseObjectType, storageKeySecretPromise: Promise<SecretKey> = this.getStorageKeySecret()): Promise<SecretKey> {
-        console.log("getSecretKey", object.path);
+        // console.log("getSecretKey", object.path);
         // TODO catch
         try {
 
             let storageKeySecret = await storageKeySecretPromise;
 
-            if (this.keys[object.path]?.secretKey) { console.log(1, SecretKey.decrypt(this.keys[object.path].secretKey!, storageKeySecret)); return SecretKey.decrypt(this.keys[object.path]?.secretKey!, storageKeySecret); }
+            if (this.keys[object.path]?.secretKey) {
+                // console.log(1, SecretKey.decrypt(this.keys[object.path].secretKey!, storageKeySecret));
+                return SecretKey.decrypt(this.keys[object.path]?.secretKey!, storageKeySecret);
+            }
             else {
                 let path = Object.keys(object.encryptedSecretKey).find(p => this.keys[p]?.secretKey);
-                if (path) { console.log(2); return SecretKey.decrypt(object.encryptedSecretKey[path], SecretKey.decrypt(this.keys[path].secretKey!, storageKeySecret)); }
+                if (path) {
+                    // console.log(2);
+                    return SecretKey.decrypt(object.encryptedSecretKey[path], SecretKey.decrypt(this.keys[path].secretKey!, storageKeySecret));
+                }
                 else {
                     let current: DatabaseObjectType = object;
                     // TODO nochmal drüber nachdenken

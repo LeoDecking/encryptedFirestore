@@ -16,7 +16,7 @@ export class Crypto {
 
     static verify(object: any, signature: string, verifyKey: VerifyKey): boolean {
         try {
-            console.log("verify", Crypto.sortObject(object), signature, verifyKey, nacl.sign.detached.verify(utf8.encode(JSON.stringify(Crypto.sortObject(object))), base64.decode(signature), verifyKey.uint8Array));
+            // console.log("verify", Crypto.sortObject(object), signature, verifyKey, nacl.sign.detached.verify(utf8.encode(JSON.stringify(Crypto.sortObject(object))), base64.decode(signature), verifyKey.uint8Array));
             return nacl.sign.detached.verify(utf8.encode(JSON.stringify(Crypto.sortObject(object))), base64.decode(signature), verifyKey.uint8Array);
         } catch {
             return false;
