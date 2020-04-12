@@ -78,49 +78,68 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         return new child(this, id);
     }
 
-    async uploadToFirestore(): Promise<void> {
-        console.log("toFirestore", this);
-
-        let documentData: any = {};
-        await Promise.all(Object.keys(this).map(async k => {
-            // console.log("property", k, (this as { [key: string]: any })[k]);
+    hash(): string {
+        let object: any = {};
+        Object.keys(this).map(async k => {
             if (this.ignoreProperties.indexOf(k) == -1)
-                // TODO sub-properties
-                if (this.databaseOptions.encryptedProperties?.indexOf(k) != -1) {
-                    // console.log("encrypt property", k, await keystore.encrypt(this, (this as { [key: string]: any })[k]));
-                    documentData[k] = await this.app.keyStore.encrypt(this, (this as { [key: string]: any })[k]);
-                }
-                else {
-                    // console.log("not encrypted property", k)
-                    documentData[k] = (this as { [key: string]: any })[k];
-                }
-            // else console.log("ignore property", k);
+                object[k] = (this as { [key: string]: any })[k];
+        });
+        return Crypto.hash(object);
+    }
+
+    uploadToFirestore(): Promise<void> {
+        return DatabaseObject.uploadToFirestore([this]);
+    }
+
+    delete(): Promise<void> {
+        return DatabaseObject.delete([this]);
+    }
+
+    static async delete(objects: DatabaseObjectType[]): Promise<void> {
+        console.log("delete", objects);
+
+        let signedObjects = await Promise.all(objects.map(async object => {
+            if (object.version == 0) throw new Error("trying to delete 0 version");
+
+            let documentData: any = {
+                path: object.path,
+                version: -object.version
+            };
+
+            console.log("signed", await object.app.keyStore.sign(object.owner, documentData));
+            return await object.app.keyStore.sign(object.owner, documentData);
         }));
-        documentData["path"] = this.path;
-        if (this.verifyKey) documentData["verifyKey"] = this.verifyKey?.string;
-        documentData["version"]++;
 
-        // console.log("encrypted", documentData);
-        console.log("signed", await this.app.keyStore.sign(this.owner, documentData));
-        let signedObject = await this.app.keyStore.sign(this.owner, documentData);
-
-        let result = await this.app.firebase.functions("europe-west3").httpsCallable("setDocument")(JSON.stringify(signedObject));
+        let result = await objects[0].app.firebase.functions("europe-west3").httpsCallable("setDocuments")(JSON.stringify(signedObjects));
         if (result.data !== true) throw new Error("unkown error");
     }
 
-    async delete(): Promise<void> {
-        console.log("delete", this);
-        if (this.version == 0) throw new Error("trying to delete 0 version");
+    static async uploadToFirestore(objects: DatabaseObjectType[]): Promise<void> {
+        console.log("toFirestore", objects);
+        if (objects.length == 0) return;
 
-        let documentData: any = {
-            path: this.path,
-            version: -this.version
-        };
+        let signedObjects = await Promise.all(objects.map(async object => {
+            let documentData: any = {};
+            await Promise.all(Object.keys(object).map(async k => {
+                if (object.ignoreProperties.indexOf(k) == -1)
+                    // TODO (encrypted) sub-properties
+                    if (object.databaseOptions.encryptedProperties?.indexOf(k) != -1) {
+                        documentData[k] = await object.app.keyStore.encrypt(object, (object as { [key: string]: any })[k]);
+                    }
+                    else {
+                        documentData[k] = (object as { [key: string]: any })[k];
+                    }
+            }));
+            documentData["path"] = object.path;
+            if (object.verifyKey) documentData["verifyKey"] = object.verifyKey?.string;
+            documentData["version"]++;
 
-        console.log("signed", await this.app.keyStore.sign(this.owner, documentData));
-        let signedObject = await this.app.keyStore.sign(this.owner, documentData);
+            // console.log("encrypted", documentData);
+            console.log("signed", await object.app.keyStore.sign(object.owner, documentData));
+            return await object.app.keyStore.sign(object.owner, documentData);
+        }));
 
-        let result = await this.app.firebase.functions("europe-west3").httpsCallable("setDocument")(JSON.stringify(signedObject));
+        let result = await objects[0].app.firebase.functions("europe-west3").httpsCallable("setDocuments")(JSON.stringify(signedObjects));
         if (result.data !== true) throw new Error("unkown error");
     }
 
