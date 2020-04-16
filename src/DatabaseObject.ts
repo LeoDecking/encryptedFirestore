@@ -134,11 +134,9 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
             if (object.verifyKey) documentData["verifyKey"] = object.verifyKey?.string;
             documentData["version"]++;
 
-            // console.log("encrypted", documentData);
             console.log("signed", await object.app.keyStore.sign(object.owner, documentData));
             return await object.app.keyStore.sign(object.owner, documentData);
         }));
-
         let result = await objects[0].app.firebase.functions("europe-west3").httpsCallable("setDocuments")(JSON.stringify(signedObjects));
         if (result.data !== true) throw new Error("unkown error");
     }

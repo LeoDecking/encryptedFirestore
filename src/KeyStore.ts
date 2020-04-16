@@ -75,7 +75,7 @@ export class KeyStore {
 
     sign<T extends DatabaseObjectType>(owner: DatabaseObjectType | App, object: T): Promise<T & { signature: string }> {
         if (!this.keys[owner.path]?.signKey) return Promise.reject("no signkey");
-        return this.getStorageKeySign().then(storageKeySign => ({ ...object, signature: Crypto.sign(object, SignKey.decrypt(this.keys[owner.path].signKey!, storageKeySign)) }));
+        return this.getStorageKeySign().then(storageKeySign => ({ ...Crypto.sortObject(object), signature: Crypto.sign(object, SignKey.decrypt(this.keys[owner.path].signKey!, storageKeySign)) }));
     }
 
     verify<T extends DatabaseObjectType>(owner: DatabaseObjectType | App, object: T & { signature: string }): T {

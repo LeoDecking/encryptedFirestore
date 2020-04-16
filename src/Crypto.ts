@@ -43,8 +43,7 @@ export class Crypto {
     }
 
     static sortObject(object: any, parseDate: boolean = false): any {
-        if (object == null) return null;
-        if (object == undefined) return undefined;
+        if (object == null || object == undefined) return null;
         if (object instanceof Date) return object;
 
         if (Array.isArray(object)) {
