@@ -17,7 +17,7 @@ export class KeyStore {
 
     private storageKeys: {
         [EncryptionType.Session]: SecretKey,
-        [EncryptionType.SessionPrompt]?: SecretKey,
+        [EncryptionType.SessionPrompt]?: SecretKey, //argon2(sessionKey + storagePassword)
         [EncryptionType.Persistent]?: SecretKey,
         [EncryptionType.PersistentPrompt]?: SecretKey,
     } = { [EncryptionType.Session]: SecretKey.generate() };
@@ -34,6 +34,7 @@ export class KeyStore {
     // TODO catches
 
     export(): string {
+        // TODO filter session
         return JSON.stringify(this.keys);
     }
 
