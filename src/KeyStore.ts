@@ -3,10 +3,24 @@ import { DatabaseObjectType } from "./DatabaseObjectType";
 import { App } from "./App";
 import { Crypto } from "./Crypto";
 
+export enum EncryptionType {
+    Session,
+    SessionPrompt,
+    Persistent,
+    PersistentPrompt
+}
+
 // TODO has key
 export class KeyStore {
     // keys are still encrypeted with storageKeySecret/storageKeySign
-    private keys: { [path: string]: { signKey?: string, secretKey?: string } };
+    private keys: { [path: string]: { signKey?: { key: string, type: EncryptionType }, secretKey?: { key: string, type: EncryptionType } } };
+
+    private storageKeys: {
+        [EncryptionType.Session]: SecretKey,
+        [EncryptionType.SessionPrompt]?: SecretKey,
+        [EncryptionType.Persistent]?: SecretKey,
+        [EncryptionType.PersistentPrompt]?: SecretKey,
+    } = { [EncryptionType.Session]: SecretKey.generate() };
 
     private getStorageKeySecret: () => Promise<SecretKey>;
     private getStorageKeySign: () => Promise<SecretKey>;
