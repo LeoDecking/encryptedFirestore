@@ -3,6 +3,7 @@ import { VerifyKey, SignKey, SecretKey } from "./Key";
 import { DatabaseObjectType, GetOwner, DatabaseChildObjectType } from "./DatabaseObjectType";
 import { App } from "./App";
 import { Crypto } from "./Crypto";
+import { KeyContainer } from "./KeyStore";
 
 // Every property must be default initialized!
 export abstract class DatabaseObject<Tstring extends string, T extends DatabaseObjectType, P extends DatabaseObjectType | App, ParentIsOwner extends boolean = true> {
@@ -98,6 +99,8 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     static async delete(objects: DatabaseObjectType[]): Promise<void> {
         console.log("delete", objects);
 
+        let keyContainer = new KeyContainer();
+
         let signedObjects = await Promise.all(objects.map(async object => {
             if (object.version == 0) throw new Error("trying to delete 0 version");
 
@@ -106,8 +109,8 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
                 version: -object.version
             };
 
-            console.log("signed", await object.app.keyStore.sign(object.owner, documentData));
-            return await object.app.keyStore.sign(object.owner, documentData);
+            console.log("signed", await object.app.keyStore.sign(object.owner, documentData, keyContainer));
+            return await object.app.keyStore.sign(object.owner, documentData, keyContainer);
         }));
 
         let result = await objects[0].app.firebase.functions("europe-west3").httpsCallable("setDocuments")(JSON.stringify(signedObjects));
@@ -118,13 +121,15 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         console.log("toFirestore", objects);
         if (objects.length == 0) return;
 
+        let keyContainer = new KeyContainer();
+
         let signedObjects = await Promise.all(objects.map(async object => {
             let documentData: any = {};
             await Promise.all(Object.keys(object).map(async k => {
                 if (object.ignoreProperties.indexOf(k) == -1)
                     // TODO (encrypted) sub-properties
                     if (object.databaseOptions.encryptedProperties?.indexOf(k) != -1) {
-                        documentData[k] = await object.app.keyStore.encrypt(object, (object as { [key: string]: any })[k]);
+                        documentData[k] = await object.app.keyStore.encrypt(object, (object as { [key: string]: any })[k], keyContainer);
                     }
                     else {
                         documentData[k] = (object as { [key: string]: any })[k];
@@ -134,7 +139,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
             if (object.verifyKey) documentData["verifyKey"] = object.verifyKey?.string;
             documentData["version"]++;
 
-            console.log("signed", await object.app.keyStore.sign(object.owner, documentData));
+            console.log("signed", await object.app.keyStore.sign(object.owner, documentData, keyContainer));
             return await object.app.keyStore.sign(object.owner, documentData);
         }));
         let result = await objects[0].app.firebase.functions("europe-west3").httpsCallable("setDocuments")(JSON.stringify(signedObjects));
@@ -183,12 +188,14 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         let documentData: { [key: string]: any } = object.app.keyStore.verify(object.owner, document.data() as T & { signature: string });
         if (documentData.path != object.path) throw new Error("wrong path: " + object.path);
 
+        let keyContainer = new KeyContainer();
+
         await Promise.all(Object.keys(object).map(async k => {
             if (object.ignoreProperties.indexOf(k) == -1)
                 // TODO sub-properties
                 if (object.databaseOptions.encryptedProperties?.indexOf(k) != -1) {
                     // TODO undefined properties
-                    (object as { [key: string]: any })[k] = Crypto.sortObject(await object.app.keyStore.decrypt(object, documentData[k]), true);
+                    (object as { [key: string]: any })[k] = Crypto.sortObject(await object.app.keyStore.decrypt(object, documentData[k], keyContainer), true);
                 }
                 else {
                     // console.log("not encrypted property", k)

@@ -33,7 +33,7 @@ export class Crypto {
     static decrypt(encryptedObject: string, secretKey: SecretKey): any {
         try {
             let uint8array = nacl.secretbox.open(base64.decode(encryptedObject.substr(32)), base64.decode(encryptedObject.substr(0, 32)), secretKey.uint8Array);
-            if (!uint8array) return undefined;
+            if (!uint8array) return undefined; // TODO error
             else return Crypto.sortObject(JSON.parse(utf8.decode(uint8array)));
         } catch { throw new Error("error while decrypting"); }
     }

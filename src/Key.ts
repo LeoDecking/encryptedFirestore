@@ -36,7 +36,7 @@ export class SignKey extends Key<"sign"> {
     static generate(password: string, salt: string): Promise<SignKey>;
     static generate(password?: string, salt?: string): SignKey | Promise<SignKey> {
         if (password && salt) {
-            return (window as any).argon2.hash({ pass: utf8.encode(password), salt: utf8.encode("422315323" + salt), hashLen: 32, mem: 131072, time: 1, parallelism: 1, type: (window as any).argon2.ArgonType.Argon2id })
+            return (window as any).argon2.hash({ pass: utf8.encode(password), salt: utf8.encode("42234223" + salt), hashLen: 32, mem: 131072, time: 1, parallelism: 1, type: (window as any).argon2.ArgonType.Argon2id })
                 .then((result: { hash: Uint8Array }) => Promise.resolve(new SignKey(nacl.sign.keyPair.fromSeed(result.hash).secretKey)))
                 .catch(() => Promise.reject("error while generating key"));
         }
@@ -50,7 +50,7 @@ export class SecretKey extends Key<"secret"> {
     static generate(password: string, salt: string): Promise<SecretKey>;
     static generate(password?: string, salt?: string): SecretKey | Promise<SecretKey> {
         if (password && salt) {
-            return (window as any).argon2.hash({ pass: utf8.encode(password), salt: utf8.encode("422315323" + salt), hashLen: 32, mem: 131072, time: 1, parallelism: 1, type: (window as any).argon2.ArgonType.Argon2id })
+            return (window as any).argon2.hash({ pass: utf8.encode(password), salt: utf8.encode("42234223" + salt), hashLen: 32, mem: 131072, time: 1, parallelism: 1, type: (window as any).argon2.ArgonType.Argon2id })
                 .then((result: { hash: Uint8Array }) => Promise.resolve(new SecretKey(result.hash)))
                 .catch(() => Promise.reject("error while generating key"));
         }
@@ -58,3 +58,5 @@ export class SecretKey extends Key<"secret"> {
         return new SecretKey(nacl.randomBytes(32));
     }
 }
+
+export enum KeyType { Secret, Sign, Verify }
