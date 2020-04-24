@@ -49,12 +49,13 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
     // TODO setKeys (all)
     async setSecretKey(keyOrPassword?: SecretKey | string) {
-        let secretKey: SecretKey
+        let secretKey: SecretKey;
         if (keyOrPassword == undefined) secretKey = SecretKey.generate();
         else if (typeof keyOrPassword == "string") secretKey = await SecretKey.generate(keyOrPassword, this.path);
         else secretKey = keyOrPassword as SecretKey;
 
         this.keyHash = Crypto.hash(secretKey.string);
+        this.encryptedSecretKey = {};
         if (this.databaseOptions.ownerMayRead && !App.isApp(this.parent))
             this.encryptedSecretKey[this.owner.path] = await this.app.keyStore.encrypt(this.owner as DatabaseObjectType, secretKey.string);
 
@@ -68,7 +69,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         else signKey = keyOrPassword as SignKey;
 
         this.verifyKey = signKey.verifyKey;
-        // TODO encrypt verifykey for owner
+        // TODO encrypt signKey for owner
         // if (this.databaseOptions.ownerMayWrite && !App.isApp(this.owner))
         //     this.encryptedSecretKey[this.owner.path] = await this.app.keyStore.encrypt(this.owner as DatabaseObjectType, secretKey.string);
 
