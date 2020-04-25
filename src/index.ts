@@ -1,6 +1,6 @@
 export { DatabaseObject } from "./DatabaseObject";
 export { App } from "./App";
-export { KeyStore } from "./KeyStore";
+export { KeyStore , KeyContainer} from "./KeyStore";
 
-export { SignKey, VerifyKey, SecretKey } from "./Key";
+export { SignKey, VerifyKey, SecretKey, KeyType } from "./Key";
 export { Crypto } from "./Crypto";
