@@ -95,9 +95,16 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         return DatabaseObject.uploadToFirestore([this]);
     }
 
+    async updateFromFirebase(constructor: new (parent: P, id?: string) => T): Promise<this> {
+        let updated = await DatabaseObject.fromFirestore.call(constructor, this.parent, this.id);
+        Object.keys(this).forEach(k => (this as { [key: string]: any })[k] = updated[k]);
+        return this;
+    }
+
     delete(): Promise<void> {
         return DatabaseObject.delete([this]);
     }
+
 
     static async delete(objects: DatabaseObjectType[]): Promise<void> {
         console.log("delete", objects);
