@@ -95,7 +95,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         return DatabaseObject.uploadToFirestore([this]);
     }
 
-    async updateFromFirebase(constructor: new (parent: P, id?: string) => T): Promise<this> {
+    async updateFromFirestore(constructor: new (parent: P, id?: string) => T): Promise<this> {
         let updated = await DatabaseObject.fromFirestore.call(constructor, this.parent, this.id);
         Object.keys(this).forEach(k => (this as { [key: string]: any })[k] = updated[k]);
         return this;
@@ -127,6 +127,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         if (result.data !== true) throw new Error("unkown error");
     }
 
+    // TODO all encrypted properties in one
     static async uploadToFirestore(objects: DatabaseObjectType[]): Promise<void> {
         console.log("toFirestore", objects);
         if (objects.length == 0) return;
