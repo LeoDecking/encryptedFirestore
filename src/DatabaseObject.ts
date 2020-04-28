@@ -127,7 +127,6 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         if (result.data !== true) throw new Error("unkown error");
     }
 
-    // TODO all encrypted properties in one
     static async uploadToFirestore(objects: DatabaseObjectType[]): Promise<void> {
         console.log("toFirestore", objects);
         if (objects.length == 0) return;
@@ -136,16 +135,20 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
         let signedObjects = await Promise.all(objects.map(async object => {
             let documentData: any = {};
-            await Promise.all(Object.keys(object).map(async k => {
-                if (object.ignoreProperties.indexOf(k) == -1)
-                    // TODO (encrypted) sub-properties
-                    if ((object.databaseOptions.encryptedProperties ?? []).indexOf(k) > -1) {
-                        documentData[k] = await object.app.keyStore.encrypt(object, (object as { [key: string]: any })[k], keyContainer);
-                    }
-                    else {
-                        documentData[k] = (object as { [key: string]: any })[k];
-                    }
-            }));
+
+            Object.keys(object).filter(k => object.ignoreProperties.indexOf(k) == -1 && (!object.databaseOptions.encryptedProperties || object.databaseOptions.encryptedProperties.indexOf(k) == -1)).forEach(k =>
+                documentData[k] = (object as { [key: string]: any })[k]
+            );
+
+            if (object.databaseOptions.encryptedProperties?.length) {
+                let encryptedProperties: { [key: string]: any } = {};
+                Object.keys(object).filter(k => object.ignoreProperties.indexOf(k) == -1 && object.databaseOptions.encryptedProperties!.indexOf(k) != -1).forEach(k =>
+                    encryptedProperties[k] = (object as { [key: string]: any })[k]
+                );
+
+                documentData.encryptedProperties = await object.app.keyStore.encrypt(object, encryptedProperties, keyContainer);
+            }
+
             documentData["path"] = object.path;
             if (object.verifyKey) documentData["verifyKey"] = object.verifyKey?.string;
             documentData["version"]++;
@@ -156,6 +159,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         let result = await objects[0].app.firebase.functions("europe-west3").httpsCallable("setDocuments")(JSON.stringify(signedObjects));
         if (result.data !== true) throw new Error("unkown error");
     }
+
 
     static fromFirestore<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], id: string): Promise<T>;
     static fromFirestore<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], id: string, onSnapshot: (object: T) => void): () => void;
@@ -201,19 +205,19 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
         let keyContainer = new KeyContainer();
 
-        await Promise.all(Object.keys(object).map(async k => {
-            if (object.ignoreProperties.indexOf(k) == -1)
-                // TODO sub-properties
-                if ((object.databaseOptions.encryptedProperties ?? []).indexOf(k) != -1) {
-                    // TODO undefined properties
-                    (object as { [key: string]: any })[k] = Crypto.sortObject(await object.app.keyStore.decrypt(object, documentData[k], keyContainer), true);
-                }
-                else {
-                    // console.log("not encrypted property", k)
-                    (object as { [key: string]: any })[k] = Crypto.sortObject(documentData[k], true);
-                }
-            // else console.log("ignore property", k);
-        }));
+        Object.keys(object).filter(k => object.ignoreProperties.indexOf(k) == -1 && (!object.databaseOptions.encryptedProperties || object.databaseOptions.encryptedProperties.indexOf(k) == -1)).forEach(k =>
+            (object as { [key: string]: any })[k] = Crypto.sortObject(documentData[k], true)
+        );
+
+        if (object.databaseOptions.encryptedProperties?.length && documentData.encryptedProperties) {
+            let encryptedProperties: { [key: string]: any } = await Crypto.sortObject(await object.app.keyStore.decrypt(object, documentData.encryptedProperties, keyContainer), true);
+
+            Object.keys(object).filter(k => object.ignoreProperties.indexOf(k) == -1 && object.databaseOptions.encryptedProperties?.indexOf(k) != -1).forEach(k =>
+                (object as { [key: string]: any })[k] = Crypto.sortObject(encryptedProperties[k], true)
+            );
+
+        }
+
         if (documentData.verifyKey) object.verifyKey = new VerifyKey(documentData.verifyKey);
 
         return object as T;
