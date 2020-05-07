@@ -13,6 +13,8 @@ abstract class Key<K extends string> {
         this.string = typeof key == "string" ? key : base64.encode(key);
         this.uint8Array = typeof key == "string" ? base64.decode(key) : key;
     }
+    abstract getKeyType(): KeyType;
+
     encrypt(secretKey: SecretKey): string {
         // console.log("encrypt", this, secretKey, "=>", Crypto.encrypt(this.string, secretKey));
         return Crypto.encrypt(this.string, secretKey);
@@ -23,7 +25,7 @@ abstract class Key<K extends string> {
         return new this(Crypto.decrypt(encryptedKey, secretKey));
     }
 }
-
+// TODO different sign/secret salt
 export class SignKey extends Key<"sign"> {
     verifyKey: VerifyKey;
 
@@ -31,6 +33,8 @@ export class SignKey extends Key<"sign"> {
         super(key);
         this.verifyKey = new VerifyKey(nacl.sign.keyPair.fromSecretKey(this.uint8Array).publicKey);
     }
+
+    getKeyType() { return KeyType.Sign };
 
     static generate(): SignKey;
     static generate(password: string, salt: string): Promise<SignKey>;
@@ -44,8 +48,12 @@ export class SignKey extends Key<"sign"> {
         return new SignKey(nacl.randomBytes(64));
     }
 }
-export class VerifyKey extends Key<"verify"> { }
+export class VerifyKey extends Key<"verify"> {
+    getKeyType() { return KeyType.Verify };
+}
 export class SecretKey extends Key<"secret"> {
+    getKeyType() { return KeyType.Secret };
+
     static generate(): SecretKey;
     static generate(password: string, salt: string): Promise<SecretKey>;
     static generate(password?: string, salt?: string): SecretKey | Promise<SecretKey> {
@@ -59,4 +67,4 @@ export class SecretKey extends Key<"secret"> {
     }
 }
 
-export enum KeyType { Secret, Sign, Verify }
+export enum KeyType { Secret = "secretKey", Sign = "signKey", Verify = "verifyKey" }

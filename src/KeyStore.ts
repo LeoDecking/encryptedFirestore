@@ -7,15 +7,14 @@ import { Crypto } from "./Crypto";
 export class KeyStore {
     private keys: { [path: string]: { secretKey?: { key: string, persistent: boolean, prompt: boolean }, signKey?: { key: string, persistent: boolean, prompt: boolean } } };
 
-    // TODO only promise, check hash
-    private storageKey?: SecretKey;
     private passwordHash: string;
 
     private getStoragePassword: (passwordHash: string) => Promise<string>;
 
-    loadStorageKey: Promise<void>;
+    loadStorageKey: Promise<SecretKey>;
 
-    // TODO no persistentKey set
+    // TODO no persistentKey set?
+    // TODO check storageKey
     // TODO public password hashes safe? -> encrypted path + version? / argon2 hash
 
     constructor(json: string, storagePassword: string, getStoragePassword: (passwordHash: string) => Promise<string>) {
@@ -23,11 +22,10 @@ export class KeyStore {
         this.passwordHash = Crypto.hash(storagePassword);
         this.getStoragePassword = getStoragePassword;
 
-        this.loadStorageKey = SecretKey.generate(storagePassword, "withoutPrompt").then(s => this.storageKey = s) as Promise<void>;
+        this.loadStorageKey = SecretKey.generate(storagePassword, "withoutPrompt");
     }
 
     export(): string {
-        // TODO filter session
         let persistentKeys: KeyStore["keys"] = {};
         Object.entries(this.keys).forEach(k => {
             if (k[1].secretKey?.persistent || k[1].signKey?.persistent) {
@@ -53,7 +51,7 @@ export class KeyStore {
             if (keys.signKey) keys.signKey.key = SecretKey.decrypt(keys.signKey.key, await this.getStorageKey(keys.signKey.prompt, oldKeyContainer)).encrypt(keys.signKey.prompt ? newStoragePromptKey : newStorageKey);
         }));
 
-        this.storageKey = newStorageKey;
+        this.loadStorageKey = Promise.resolve(newStorageKey);
         return this.passwordHash = Crypto.hash(newPassword);
     }
 
@@ -72,8 +70,7 @@ export class KeyStore {
 
             return keyContainer.storagePromptKey;
         } else {
-            await this.loadStorageKey;
-            return this.storageKey!;
+            return await this.loadStorageKey;
         }
     }
 
@@ -81,17 +78,36 @@ export class KeyStore {
         return Object.keys(this.keys);
     }
 
-    // TODO überprüfen, ob richtig?
-    async setKey(type: KeyType.Secret | KeyType.Sign, key: SecretKey | SignKey | string, path: string, persistent: boolean, prompt: boolean, keyContainer: KeyContainer = new KeyContainer()): Promise<void> {
-        if (typeof (key) == "string") key = await (type == KeyType.Secret ? SecretKey : SignKey).generate(key, path);
-        if (!this.keys[path]) this.keys[path] = {};
-        this.keys[path][type == KeyType.Secret ? "secretKey" : "signKey"] = {
-            key: key.encrypt(await this.getStorageKey(prompt, keyContainer)),
-            persistent: persistent,
-            prompt: prompt
-        };
+    // TODO canSign/canRead
+    // TODO test
+    async setPassword(path: string, password: string, secretKeyOptions: StorageOptions = { store: "none" }, signKeyOptions: StorageOptions = { store: "none" }, keyContainer: KeyContainer = new KeyContainer()): Promise<KeyContainer> {
+        await Promise.all([
+            secretKeyOptions.store == "none" ? Promise.resolve() : SecretKey.generate(password, path).then(async secretKey => this.setKey(secretKey, path, secretKeyOptions, keyContainer)),
+            signKeyOptions.store == "none" ? Promise.resolve() : SignKey.generate(password, path).then(async signKey => this.setKey(signKey, path, signKeyOptions, keyContainer))
+        ] as Promise<KeyContainer | void>[]);
+        return keyContainer;
     }
 
+    // TODO überprüfen, ob richtig?
+    async setKey(key: SecretKey | SignKey, path: string, storageOptions: StorageOptions = { store: "once" }, keyContainer: KeyContainer = new KeyContainer()): Promise<KeyContainer> {
+        if (storageOptions.store == "once") {
+            if (!keyContainer.keys[path]) keyContainer.keys[path] = {};
+            (keyContainer.keys[path] as { [type: string]: SecretKey | SignKey })[key.getKeyType()] = key;
+        }
+        else {
+            if (!this.keys[path]) this.keys[path] = {};
+            this.keys[path][key.getKeyType() as KeyType.Secret | KeyType.Sign] = {
+                key: key.encrypt(await this.getStorageKey(storageOptions.storageKeyPrompt == "always", keyContainer)),
+                persistent: storageOptions.store == "persistent",
+                prompt: storageOptions.storageKeyPrompt == "always"
+            };
+        }
+        return keyContainer;
+    }
+
+    async deletePassword(path: string) {
+        delete this.keys[path];
+    }
     async deleteKey(type: KeyType.Secret | KeyType.Sign, path: string) {
         delete this.keys[path][type == KeyType.Secret ? "secretKey" : "signKey"];
     }
@@ -168,11 +184,19 @@ export class KeyStore {
     }
 }
 // TODO Achtung: man kann keyStore.encrypt ein keyContainerObjekt übergeben, welches dann befüllt wird😬
+// TODO include in getSecretKey
 export class KeyContainer {
     storagePromptKey?: SecretKey;
     storagePassword?: Promise<string | void>;
 
+    keys: { [path: string]: { secretKey?: SecretKey, signKey?: SignKey } } = {};
+
     constructor(storagePassword?: string) {
         if (storagePassword) this.storagePassword = Promise.resolve(storagePassword);
     }
+}
+
+export interface StorageOptions {
+    store: "none" | "once" | "session" | "persistent";
+    storageKeyPrompt?: "once" | "always";
 }

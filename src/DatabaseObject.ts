@@ -43,37 +43,34 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     // TODO without constructor
     clone(constructor: new (parent: P, id?: string) => T): T {
         let object = new constructor(this.parent, this.id) as T;
-        Object.keys(this).forEach(k => (object as { [key: string]: any })[k] = (this.ignoreProperties.indexOf(k) == -1) ? Crypto.sortObject((this as { [key: string]: any })[k]) : (this as { [key: string]: any })[k]);
+        Object.keys(object).forEach(k => (object as { [key: string]: any })[k] = (this.ignoreProperties.indexOf(k) == -1) ? Crypto.sortObject((this as { [key: string]: any })[k]) : (this as { [key: string]: any })[k]);
         return object;
     }
 
-    // TODO setKeys (all)?
-    // TODO save key in keystore
-    // TODO keycontainer
-    async setSecretKey(keyOrPassword?: SecretKey | string) {
+    cloneFrom(object: this): this {
+        Object.keys(this).forEach(k => (this as { [key: string]: any })[k] = (this.ignoreProperties.indexOf(k) == -1) ? Crypto.sortObject((object as { [key: string]: any })[k]) : (object as { [key: string]: any })[k]);
+        return this;
+    }
+
+    // TODO save in keystore?
+    async setPassword(password?: string): Promise<this> {
         let secretKey: SecretKey;
-        if (keyOrPassword == undefined) secretKey = SecretKey.generate();
-        else if (typeof keyOrPassword == "string") secretKey = await SecretKey.generate(keyOrPassword, this.path);
-        else secretKey = keyOrPassword as SecretKey;
+        if (password == undefined) secretKey = SecretKey.generate();
+        else secretKey = await SecretKey.generate(password, this.path);
 
         this.keyHash = Crypto.hash(secretKey.string);
         this.encryptedSecretKey = {};
         if (this.databaseOptions.ownerMayRead && !App.isApp(this.parent))
             this.encryptedSecretKey[this.owner.path] = await this.app.keyStore.encrypt(this.owner as DatabaseObjectType, secretKey.string);
 
-        return this;
-    }
+        if (this.databaseOptions.canSign) {
+            let signKey: SignKey;
+            if (password == undefined) signKey = SignKey.generate();
+            else signKey = await SignKey.generate(password, this.path);
 
-    async setSignKey(keyOrPassword?: SecretKey | string) {
-        let signKey: SignKey;
-        if (keyOrPassword == undefined) signKey = SignKey.generate();
-        else if (typeof keyOrPassword == "string") signKey = await SignKey.generate(keyOrPassword, this.path);
-        else signKey = keyOrPassword as SignKey;
-
-        this.verifyKey = signKey.verifyKey;
-        // TODO encrypt signKey for owner
-        // if (this.databaseOptions.ownerMayWrite && !App.isApp(this.owner))
-        //     this.encryptedSecretKey[this.owner.path] = await this.app.keyStore.encrypt(this.owner as DatabaseObjectType, secretKey.string);
+            this.verifyKey = signKey.verifyKey;
+            // TODO encrypt signKey for parents?
+        }
 
         return this;
     }
@@ -153,11 +150,12 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
             if (object.verifyKey) documentData["verifyKey"] = object.verifyKey?.string;
             documentData["version"]++;
 
-            console.log("signed", await object.app.keyStore.sign(object.owner, documentData, keyContainer));
+            // console.log("signed", await object.app.keyStore.sign(object.owner, documentData, keyContainer));
             return await object.app.keyStore.sign(object.owner, documentData, keyContainer);
         }));
         let result = await objects[0].app.firebase.functions("europe-west3").httpsCallable("setDocuments")(JSON.stringify(signedObjects));
         if (result.data !== true) throw new Error("unkown error");
+        objects.forEach(o => o.version++);
     }
 
 
@@ -205,6 +203,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
         let keyContainer = new KeyContainer();
 
+
         Object.keys(object).filter(k => object.ignoreProperties.indexOf(k) == -1 && (!object.databaseOptions.encryptedProperties || object.databaseOptions.encryptedProperties.indexOf(k) == -1)).forEach(k =>
             (object as { [key: string]: any })[k] = Crypto.sortObject(documentData[k], true)
         );
@@ -217,6 +216,11 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
             );
 
         }
+        // else if(object.databaseOptions.encryptedProperties?.length) {
+        //     await Promise.all(Object.keys(object).filter(k => object.ignoreProperties.indexOf(k) == -1 && object.databaseOptions.encryptedProperties?.indexOf(k) != -1).map(async k =>
+        //         (object as { [key: string]: any })[k] = Crypto.sortObject(await Crypto.sortObject(await object.app.keyStore.decrypt(object, documentData[k], keyContainer), true), true)
+        //     ));
+        // }
 
         if (documentData.verifyKey) object.verifyKey = new VerifyKey(documentData.verifyKey);
 
