@@ -1,5 +1,5 @@
 import { VerifyKey, SignKey, SecretKey, KeyType } from "./Key";
-import { DatabaseObjectType } from "./DatabaseObjectType";
+import { DatabaseObjectType, GetOwner } from "./DatabaseObjectType";
 import { App } from "./App";
 import { Crypto } from "./Crypto";
 
@@ -124,7 +124,7 @@ export class KeyStore {
     // Es können nur Objekte direkt gesehen werden, die parent (n-ten Grades) vom object sind
     // 1. SecretKey im KeyStore gespeichert
     // 2. SecretKey verlinkt, der im KeyStore gespeichert ist
-    // 3. SecrentKey vom nächstbesten Parent verlinkt (nur der "niedrigste" Parent, der verlinkt ist, wird betrachtet), auf den 1. oder 2. oder 3. zutrifft
+    // 3. SecretKey vom nächstbesten Parent verlinkt (nur der "niedrigste" Parent, der verlinkt ist, wird betrachtet), auf den 1. oder 2. oder 3. zutrifft
     private async getSecretKey(object: DatabaseObjectType, keyContainer: KeyContainer): Promise<SecretKey> {
         // console.log("getSecretKey", object.path);
         // TODO catch
@@ -167,12 +167,12 @@ export class KeyStore {
     }
 
     // TODO getSignKey
-    sign<T extends DatabaseObjectType>(owner: DatabaseObjectType | App, object: T, keyContainer: KeyContainer = new KeyContainer()): Promise<T & { signature: string }> {
+    sign<T extends DatabaseObjectType>(owner: GetOwner<T>, object: T, keyContainer: KeyContainer = new KeyContainer()): Promise<T & { signature: string }> {
         if (!this.keys[owner.path]?.signKey) return Promise.reject("no signkey");
         return this.decryptSignKey(this.keys[owner.path].signKey!, keyContainer).then(signKey => ({ ...Crypto.sortObject(object), signature: Crypto.sign(object, signKey) }));
     }
 
-    verify<T extends DatabaseObjectType>(owner: DatabaseObjectType | App, object: T & { signature: string }): T {
+    verify<T extends DatabaseObjectType>(owner: GetOwner<T>, object: T & { signature: string }): T {
         if (!object) throw new Error("undefined object");
         if (!owner.verifyKey) throw new Error("no verifykey");
         let o = { ...object };
