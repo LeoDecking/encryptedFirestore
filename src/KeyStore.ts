@@ -65,6 +65,7 @@ export class KeyStore {
             // TODO there will be many error messages
             if (!storagePassword) throw new Error("password not entered");
 
+            // TODO probably generated multiple times;
             keyContainer.storagePromptKey = await SecretKey.generate(storagePassword, "prompt");
             delete keyContainer.storagePassword;
 
@@ -129,15 +130,17 @@ export class KeyStore {
         // console.log("getSecretKey", object.path);
         // TODO catch
         try {
-            if (this.keys[object.path]?.secretKey) {
+            if (keyContainer.keys[object.path]?.secretKey) {
+                return keyContainer.keys[object.path].secretKey!;
+            }
+            else if (this.keys[object.path]?.secretKey) {
                 // console.log(1, SecretKey.decrypt(this.keys[object.path].secretKey!, storageKeySecret));
                 return await this.decryptSecretKey(this.keys[object.path].secretKey!, keyContainer);
-            }
-            else {
-                let path = Object.keys(object.encryptedSecretKey).find(p => this.keys[p]?.secretKey);
+            } else {
+                let path = Object.keys(object.encryptedSecretKey).find(p => keyContainer.keys[p]?.secretKey || this.keys[p]?.secretKey);
                 if (path) {
                     // console.log(2);
-                    return SecretKey.decrypt(object.encryptedSecretKey[path], await this.decryptSecretKey(this.keys[path].secretKey!, keyContainer));
+                    return SecretKey.decrypt(object.encryptedSecretKey[path], keyContainer.keys[path]?.secretKey ? keyContainer.keys[path].secretKey! : await this.decryptSecretKey(this.keys[path].secretKey!, keyContainer));
                 }
                 else {
                     let current: DatabaseObjectType = object;
@@ -167,18 +170,22 @@ export class KeyStore {
     }
 
     // TODO getSignKey
-    sign<T extends DatabaseObjectType>(owner: GetOwner<T>, object: T, keyContainer: KeyContainer = new KeyContainer()): Promise<T & { signature: string }> {
-        if (!this.keys[owner.path]?.signKey) return Promise.reject("no signkey");
-        return this.decryptSignKey(this.keys[owner.path].signKey!, keyContainer).then(signKey => ({ ...Crypto.sortObject(object), signature: Crypto.sign(object, signKey) }));
+    sign<T extends DatabaseObjectType>(owner: GetOwner<T>, object: T, keyContainer: KeyContainer = new KeyContainer()): Promise<T> {
+        if (!this.keys[owner.path]?.signKey && !keyContainer.keys[owner.path]?.signKey) return Promise.reject("no signkey");
+        let o = { ...object };
+        delete o.signature;
+        return (keyContainer.keys[owner.path]?.signKey ? Promise.resolve(keyContainer.keys[owner.path].signKey!) : this.decryptSignKey(this.keys[owner.path].signKey!, keyContainer)).then(signKey => ({ ...Crypto.sortObject(object), signature: Crypto.sign(o, signKey) }));
     }
 
-    verify<T extends DatabaseObjectType>(owner: GetOwner<T>, object: T & { signature: string }): T {
+    verify<T extends DatabaseObjectType>(owner: GetOwner<T>, object: T): T {
         if (!object) throw new Error("undefined object");
+        if (!object.signature) throw new Error("no signature");
         if (!owner.verifyKey) throw new Error("no verifykey");
+
         let o = { ...object };
         delete o.signature;
         if (Crypto.verify(o, object.signature, owner.verifyKey!))
-            return o;
+            return object;
         else
             throw new Error("wrong signature");
     }
@@ -192,7 +199,13 @@ export class KeyContainer {
     keys: { [path: string]: { secretKey?: SecretKey, signKey?: SignKey } } = {};
 
     constructor(storagePassword?: string) {
-        if (storagePassword) this.storagePassword = Promise.resolve(storagePassword);
+        if (storagePassword) {
+            this.storagePassword = Promise.resolve(storagePassword);
+            SecretKey.generate(storagePassword, "prompt").then(k => {
+                this.storagePromptKey = k;
+                delete this.storagePassword;
+            });
+        };
     }
 }
 

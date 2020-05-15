@@ -43,7 +43,7 @@ export class SignKey extends Key<"sign"> {
             return (window as any).argon2.hash({ pass: utf8.encode(password), salt: utf8.encode("42234223" + salt + "sign"), hashLen: 32, mem: 131072, time: 1, parallelism: 1, type: (window as any).argon2.ArgonType.Argon2id })
                 .then((result: { hash: Uint8Array }) => Promise.resolve(new SignKey(nacl.sign.keyPair.fromSeed(result.hash).secretKey)))
                 .catch(() => Promise.reject("error while generating key"));
-        }
+        }   
 
         return new SignKey(nacl.randomBytes(64));
     }

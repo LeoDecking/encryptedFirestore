@@ -3,7 +3,7 @@ import { VerifyKey, SignKey, SecretKey } from "./Key";
 import { DatabaseObjectType, GetOwner, DatabaseChildObjectType } from "./DatabaseObjectType";
 import { App } from "./App";
 import { Crypto } from "./Crypto";
-import { KeyContainer } from "./KeyStore";
+import { KeyContainer, KeyStore } from "./KeyStore";
 
 // Every property must be default initialized!
 export abstract class DatabaseObject<Tstring extends string, T extends DatabaseObjectType, P extends DatabaseObjectType | App, ParentIsOwner extends boolean = true> {
@@ -33,6 +33,8 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     // you can store the secret key of an object encrypted by different keys
     encryptedSecretKey: { [path: string]: string } = {};
 
+    signature?: string = "";
+
 
     constructor(parent: P, id: string = AutoId.newId()) {
         this.id = id;
@@ -40,9 +42,24 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         this.app = App.isApp(parent) ? parent : (parent as DatabaseObjectType).app;
     }
 
+    newChild<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, id?: string): C {
+        return new child(this, id);
+    }
+
+    hash(): string {
+        let object: any = {};
+        Object.keys(this).map(async k => {
+            if (this.ignoreProperties.indexOf(k) == -1)
+                object[k] = (this as { [key: string]: any })[k];
+        });
+        return Crypto.hash(object);
+    }
+
+    // TODO keycontainer as parameter!!
+    // TODO id from path
     static async fromDocumentData<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], documentData: { [key: string]: any }, id: string = AutoId.newId(), opaque: boolean = false, keyContainer: KeyContainer = new KeyContainer()): Promise<T> {
         let object = new this(parent, id);
-        object.app.keyStore.verify(object.owner as GetOwner<T>, documentData as T & { signature: string });
+        object.app.keyStore.verify(object.owner as GetOwner<T>, documentData as T);
         if (documentData.path != object.path) throw new Error("wrong path: " + object.path);
 
 
@@ -68,7 +85,6 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
         return object as T;
     }
-
     // TODO test
     async childFromDocumentData<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, documentData: { [key: string]: any }, id: string = AutoId.newId(), opaque: boolean = false, keyContainer: KeyContainer = new KeyContainer()): Promise<C> {
         return await DatabaseObject.fromDocumentData.call(child, parent, documentData, id, opaque, keyContainer);
@@ -91,6 +107,42 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         Object.keys(this).forEach(k => (this as { [key: string]: any })[k] = (this.ignoreProperties.indexOf(k) == -1) ? Crypto.sortObject((object as { [key: string]: any })[k]) : (object as { [key: string]: any })[k]);
         return this;
     }
+
+    // TODO test
+    // TODO signature has to be different because of other encryption salt 😬
+    static async toDocumentData(objects: DatabaseObjectType[], incrementVersion = false, keyContainer: KeyContainer = new KeyContainer()): Promise<{ [key: string]: any }[]> {
+        return await Promise.all(objects.map(async object => {
+            let documentData: any = {};
+
+            Object.keys(object).filter(k => object.ignoreProperties.indexOf(k) == -1 && (!object.databaseOptions.encryptedProperties || object.databaseOptions.encryptedProperties.indexOf(k) == -1)).forEach(k =>
+                documentData[k] = (object as { [key: string]: any })[k]
+            );
+
+            if (object.databaseOptions.encryptedProperties?.length) {
+                let encryptedProperties: { [key: string]: any } = {};
+                Object.keys(object).filter(k => object.ignoreProperties.indexOf(k) == -1 && object.databaseOptions.encryptedProperties!.indexOf(k) != -1).forEach(k =>
+                    encryptedProperties[k] = (object as { [key: string]: any })[k]
+                );
+
+                documentData.encryptedProperties = await object.app.keyStore.encrypt(object, encryptedProperties, keyContainer);
+            }
+
+            documentData["path"] = object.path;
+            if (object.verifyKey) documentData["verifyKey"] = object.verifyKey?.string;
+            if (incrementVersion) documentData["version"]++;
+
+            // console.log("signed", await object.app.keyStore.sign(object.owner, documentData, keyContainer));
+            try {
+                return object.app.keyStore.verify(object.parent, documentData);
+            } catch {
+                return await object.app.keyStore.sign(object.owner, documentData, keyContainer);
+            }
+        }));
+    }
+    async toDocumentData(incrementVersion = false, keyContainer: KeyContainer = new KeyContainer()): Promise<{ [key: string]: any }> {
+        return (await DatabaseObject.toDocumentData([this], incrementVersion, keyContainer))[0];
+    }
+
 
     async getOpaquePassword(password: string): Promise<string> {
         let opaque: { keyHash?: string, verifyKey?: string } = {};
@@ -130,89 +182,10 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         return this;
     }
 
-    newChild<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, id?: string): C {
-        return new child(this, id);
-    }
 
-    hash(): string {
-        let object: any = {};
-        Object.keys(this).map(async k => {
-            if (this.ignoreProperties.indexOf(k) == -1)
-                object[k] = (this as { [key: string]: any })[k];
-        });
-        return Crypto.hash(object);
-    }
 
-    // TODO export/save documentData - signature??
 
-    uploadToFirestore(): Promise<void> {
-        return DatabaseObject.uploadToFirestore([this]);
-    }
 
-    async updateFromFirestore(constructor: new (parent: P, id?: string) => T): Promise<this> {
-        let updated = await DatabaseObject.fromFirestore.call(constructor, this.parent, this.id);
-        Object.keys(this).forEach(k => (this as { [key: string]: any })[k] = updated[k]);
-        return this;
-    }
-
-    deleteFromFirestore(): Promise<void> {
-        return DatabaseObject.deletefromFirestore([this]);
-    }
-
-    static async deletefromFirestore(objects: DatabaseObjectType[]): Promise<void> {
-        console.log("delete", objects);
-
-        let keyContainer = new KeyContainer();
-
-        let signedObjects = await Promise.all(objects.map(async object => {
-            if (object.version == 0) throw new Error("trying to delete 0 version");
-
-            let documentData: any = {
-                path: object.path,
-                version: -object.version
-            };
-
-            console.log("signed", await object.app.keyStore.sign(object.owner, documentData, keyContainer));
-            return await object.app.keyStore.sign(object.owner, documentData, keyContainer);
-        }));
-
-        let result = await objects[0].app.firebase.functions("europe-west3").httpsCallable("setDocuments")(JSON.stringify(signedObjects));
-        if (result.data !== true) throw new Error("unkown error");
-    }
-
-    static async uploadToFirestore(objects: DatabaseObjectType[]): Promise<void> {
-        console.log("toFirestore", objects);
-        if (objects.length == 0) return;
-
-        let keyContainer = new KeyContainer();
-
-        let signedObjects = await Promise.all(objects.map(async object => {
-            let documentData: any = {};
-
-            Object.keys(object).filter(k => object.ignoreProperties.indexOf(k) == -1 && (!object.databaseOptions.encryptedProperties || object.databaseOptions.encryptedProperties.indexOf(k) == -1)).forEach(k =>
-                documentData[k] = (object as { [key: string]: any })[k]
-            );
-
-            if (object.databaseOptions.encryptedProperties?.length) {
-                let encryptedProperties: { [key: string]: any } = {};
-                Object.keys(object).filter(k => object.ignoreProperties.indexOf(k) == -1 && object.databaseOptions.encryptedProperties!.indexOf(k) != -1).forEach(k =>
-                    encryptedProperties[k] = (object as { [key: string]: any })[k]
-                );
-
-                documentData.encryptedProperties = await object.app.keyStore.encrypt(object, encryptedProperties, keyContainer);
-            }
-
-            documentData["path"] = object.path;
-            if (object.verifyKey) documentData["verifyKey"] = object.verifyKey?.string;
-            documentData["version"]++;
-
-            // console.log("signed", await object.app.keyStore.sign(object.owner, documentData, keyContainer));
-            return await object.app.keyStore.sign(object.owner, documentData, keyContainer);
-        }));
-        let result = await objects[0].app.firebase.functions("europe-west3").httpsCallable("setDocuments")(JSON.stringify(signedObjects));
-        if (result.data !== true) throw new Error("unkown error");
-        objects.forEach(o => o.version++);
-    }
 
     // TODO keycontainer
 
@@ -268,4 +241,45 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         return DatabaseObject.collectionFromFirestore.call(child as any, this, queries, opaque, onSnapshot);
     }
 
+    async updateFromFirestore(constructor: new (parent: P, id?: string) => T): Promise<this> {
+        let updated = await DatabaseObject.fromFirestore.call(constructor, this.parent, this.id);
+        Object.keys(this).forEach(k => (this as { [key: string]: any })[k] = updated[k]);
+        return this;
+    }
+
+
+    static async uploadToFirestore(objects: DatabaseObjectType[], keyContainer = new KeyContainer()): Promise<void> {
+        console.log("toFirestore", objects);
+
+        let result = await objects[0].app.firebase.functions("europe-west3").httpsCallable("setDocuments")(JSON.stringify(await DatabaseObject.toDocumentData(objects, true, keyContainer)));
+        if (result.data !== true) throw new Error("unkown error");
+        objects.forEach(o => o.version++);
+    }
+    uploadToFirestore(keyContainer = new KeyContainer()): Promise<void> {
+        return DatabaseObject.uploadToFirestore([this], keyContainer);
+    }
+
+    static async deleteFromFirestore(objects: DatabaseObjectType[]): Promise<void> {
+        console.log("delete", objects);
+
+        let keyContainer = new KeyContainer();
+
+        let signedObjects = await Promise.all(objects.map(async object => {
+            if (object.version == 0) throw new Error("trying to delete 0 version");
+
+            let documentData: any = {
+                path: object.path,
+                version: -object.version
+            };
+
+            console.log("signed", await object.app.keyStore.sign(object.owner, documentData, keyContainer));
+            return await object.app.keyStore.sign(object.owner, documentData, keyContainer);
+        }));
+
+        let result = await objects[0].app.firebase.functions("europe-west3").httpsCallable("setDocuments")(JSON.stringify(signedObjects));
+        if (result.data !== true) throw new Error("unkown error");
+    }
+    deleteFromFirestore(): Promise<void> {
+        return DatabaseObject.deleteFromFirestore([this]);
+    }
 }
