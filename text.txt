@@ -1,0 +1,19 @@
+SignKeys und PrivateKeys werden NIE in der Datenbank gespeichert, auch nicht verschlüsselt -> sie könnten exportiert werden!
+
+Jedes DatabaseObject hat einen SignKey mit zugehörigem VerifyKey.
+DatabaseObjects können von beliebigen höherstehenden Parents signiert werden (bis dahin muss jeweils mayParentWrite gesetzt sein) - die id vom Signateur wird der Signatur vorangestellt.
+Für Offline-Speicherung kann auch mit einem Gerät-eigenen SignKey signiert werden.
+
+Verschlüsselt wird jedes Mal mit einem neuen zufälligen SecretKey.
+Dieser wird mit dem eigenen PrivateKey und den PublicKeys der leseberechtigen DatabaseObjects verschlüsselt.
+=>Der Schreiber entscheidet, wer lesen kann.
+=>publicKeys werden in DatabaseObject gespeichert(x+y)
+
+
+Es gibt also:
+
+SignKey, VerifyKey
+PrivateKey, PublicKey
+SecretKey
+
+Werden weiterhin mit argon2 generiert

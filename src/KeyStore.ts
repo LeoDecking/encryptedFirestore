@@ -1,7 +1,7 @@
 import { VerifyKey, SignKey, SecretKey, KeyType } from "./Key";
 import { DatabaseObjectType, GetOwner } from "./DatabaseObjectType";
 import { App } from "./App";
-import { Crypto } from "./Crypto";
+import { ObjectsCrypto } from "./ObjectsCrypto";
 
 // TODO has key
 export class KeyStore {
@@ -19,7 +19,7 @@ export class KeyStore {
 
     constructor(json: string, storagePassword: string, getStoragePassword: (passwordHash: string) => Promise<string>) {
         this.keys = JSON.parse(json);
-        this.passwordHash = Crypto.hash(storagePassword);
+        this.passwordHash = ObjectsCrypto.hash(storagePassword);
         this.getStoragePassword = getStoragePassword;
 
         this.loadStorageKey = SecretKey.generate(storagePassword, "withoutPrompt");
@@ -39,7 +39,7 @@ export class KeyStore {
 
     // returns passwordHash
     async setStoragePassword(oldPassword: string, newPassword: string): Promise<string> {
-        if (Crypto.hash(oldPassword) != this.passwordHash) throw new Error("wrong password");
+        if (ObjectsCrypto.hash(oldPassword) != this.passwordHash) throw new Error("wrong password");
 
         let oldKeyContainer = new KeyContainer(oldPassword);
         let newStorageKey = await SecretKey.generate(newPassword, "withoutPrompt");
@@ -52,7 +52,7 @@ export class KeyStore {
         }));
 
         this.loadStorageKey = Promise.resolve(newStorageKey);
-        return this.passwordHash = Crypto.hash(newPassword);
+        return this.passwordHash = ObjectsCrypto.hash(newPassword);
     }
 
     private async getStorageKey(prompt: boolean, keyContainer: KeyContainer): Promise<SecretKey> {
@@ -162,11 +162,11 @@ export class KeyStore {
     }
 
     encrypt(object: DatabaseObjectType, property: any, keyContainer: KeyContainer = new KeyContainer()): Promise<string> {
-        return this.getSecretKey(object, keyContainer).then(key => Crypto.encrypt(property, key));
+        return this.getSecretKey(object, keyContainer).then(key => ObjectsCrypto.encrypt(property, key));
     }
 
     decrypt(object: DatabaseObjectType, property: string, keyContainer: KeyContainer = new KeyContainer()): Promise<any> {
-        return this.getSecretKey(object, keyContainer).then(key => Crypto.decrypt(property, key));
+        return this.getSecretKey(object, keyContainer).then(key => ObjectsCrypto.decrypt(property, key));
     }
 
     // TODO getSignKey
@@ -174,7 +174,7 @@ export class KeyStore {
         if (!this.keys[owner.path]?.signKey && !keyContainer.keys[owner.path]?.signKey) return Promise.reject("no signkey");
         let o = { ...object };
         delete o.signature;
-        return (keyContainer.keys[owner.path]?.signKey ? Promise.resolve(keyContainer.keys[owner.path].signKey!) : this.decryptSignKey(this.keys[owner.path].signKey!, keyContainer)).then(signKey => ({ ...Crypto.sortObject(object), signature: Crypto.sign(o, signKey) }));
+        return (keyContainer.keys[owner.path]?.signKey ? Promise.resolve(keyContainer.keys[owner.path].signKey!) : this.decryptSignKey(this.keys[owner.path].signKey!, keyContainer)).then(signKey => ({ ...ObjectsCrypto.sortObject(object), signature: ObjectsCrypto.sign(o, signKey) }));
     }
 
     verify<T extends DatabaseObjectType>(owner: GetOwner<T>, object: T): T {
@@ -184,7 +184,7 @@ export class KeyStore {
 
         let o = { ...object };
         delete o.signature;
-        if (Crypto.verify(o, object.signature, owner.verifyKey!))
+        if (ObjectsCrypto.verify(o, object.signature, owner.verifyKey!))
             return object;
         else
             throw new Error("wrong signature");

@@ -2,7 +2,7 @@ import { AutoId } from "./AutoId";
 import { VerifyKey, SignKey, SecretKey } from "./Key";
 import { DatabaseObjectType, GetOwner, DatabaseChildObjectType } from "./DatabaseObjectType";
 import { App } from "./App";
-import { Crypto } from "./Crypto";
+import { ObjectsCrypto } from "./ObjectsCrypto";
 import { KeyContainer, KeyStore } from "./KeyStore";
 
 // Every property must be default initialized!
@@ -28,10 +28,9 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     get path(): string { return this.parent.path + "/" + this.databaseOptions.collection + "/" + this.id; }
     version: number = 0;
 
-    keyHash: string = "";
+    publicKey?: CryptoKey;
     verifyKey?: VerifyKey;
-    // you can store the secret key of an object encrypted by different keys
-    encryptedSecretKey: { [path: string]: string } = {};
+    publicKeys: CryptoKey[] = [];
 
     signature?: string = "";
 
@@ -52,7 +51,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
             if (this.ignoreProperties.indexOf(k) == -1)
                 object[k] = (this as { [key: string]: any })[k];
         });
-        return Crypto.hash(object);
+        return ObjectsCrypto.hash(object);
     }
 
     // TODO keycontainer as parameter!!
@@ -64,14 +63,14 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
 
         Object.keys(object).filter(k => object.ignoreProperties.indexOf(k) == -1 && (!object.databaseOptions.encryptedProperties || object.databaseOptions.encryptedProperties.indexOf(k) == -1)).forEach(k =>
-            (object as { [key: string]: any })[k] = Crypto.sortObject(documentData[k], true)
+            (object as { [key: string]: any })[k] = ObjectsCrypto.sortObject(documentData[k], true)
         );
 
         if (!opaque && object.databaseOptions.encryptedProperties?.length && documentData.encryptedProperties) {
-            let encryptedProperties: { [key: string]: any } = await Crypto.sortObject(await object.app.keyStore.decrypt(object, documentData.encryptedProperties, keyContainer), true);
+            let encryptedProperties: { [key: string]: any } = await ObjectsCrypto.sortObject(await object.app.keyStore.decrypt(object, documentData.encryptedProperties, keyContainer), true);
 
             Object.keys(object).filter(k => object.ignoreProperties.indexOf(k) == -1 && object.databaseOptions.encryptedProperties?.indexOf(k) != -1).forEach(k =>
-                (object as { [key: string]: any })[k] = Crypto.sortObject(encryptedProperties[k], true)
+                (object as { [key: string]: any })[k] = ObjectsCrypto.sortObject(encryptedProperties[k], true)
             );
 
         }
@@ -99,12 +98,12 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     // TODO without constructor
     clone(constructor: new (parent: P, id?: string) => T): T {
         let object = new constructor(this.parent, this.id) as T;
-        Object.keys(object).forEach(k => (object as { [key: string]: any })[k] = (this.ignoreProperties.indexOf(k) == -1) ? Crypto.sortObject((this as { [key: string]: any })[k]) : (this as { [key: string]: any })[k]);
+        Object.keys(object).forEach(k => (object as { [key: string]: any })[k] = (this.ignoreProperties.indexOf(k) == -1) ? ObjectsCrypto.sortObject((this as { [key: string]: any })[k]) : (this as { [key: string]: any })[k]);
         return object;
     }
 
     cloneFrom(object: this): this {
-        Object.keys(this).forEach(k => (this as { [key: string]: any })[k] = (this.ignoreProperties.indexOf(k) == -1) ? Crypto.sortObject((object as { [key: string]: any })[k]) : (object as { [key: string]: any })[k]);
+        Object.keys(this).forEach(k => (this as { [key: string]: any })[k] = (this.ignoreProperties.indexOf(k) == -1) ? ObjectsCrypto.sortObject((object as { [key: string]: any })[k]) : (object as { [key: string]: any })[k]);
         return this;
     }
 
@@ -146,7 +145,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
     async getOpaquePassword(password: string): Promise<string> {
         let opaque: { keyHash?: string, verifyKey?: string } = {};
-        opaque.keyHash = Crypto.hash((await SecretKey.generate(password, this.path)).string);
+        opaque.keyHash = ObjectsCrypto.hash((await SecretKey.generate(password, this.path)).string);
         if (this.databaseOptions.canSign) opaque.verifyKey = (await SignKey.generate(password, this.path)).verifyKey.string;
 
         return btoa(JSON.stringify(opaque));
@@ -166,7 +165,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         if (password == undefined) secretKey = SecretKey.generate();
         else secretKey = await SecretKey.generate(password, this.path);
 
-        this.keyHash = Crypto.hash(secretKey.string);
+        this.keyHash = ObjectsCrypto.hash(secretKey.string);
         this.encryptedSecretKey = {};
         if (this.databaseOptions.ownerMayRead && !App.isApp(this.parent))
             this.encryptedSecretKey[this.owner.path] = await this.app.keyStore.encrypt(this.owner as DatabaseObjectType, secretKey.string);
