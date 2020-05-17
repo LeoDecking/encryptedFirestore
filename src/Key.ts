@@ -7,7 +7,7 @@ import nacl from "tweetnacl";
 import { Curve, getCurveByName } from "ecurve";
 
 abstract class Key<K extends KeyType> {
-    private _keyType: K;
+    private _keyType?: K;
 
     key: CryptoKey;
 
@@ -16,31 +16,59 @@ abstract class Key<K extends KeyType> {
     }
 
     abstract getKeyType(): K;
+
+    // TODO subclass private/public key 0>move methods there (auch generate)
+    // (+privateEncryption, publicEncryption)
+    protected static getKeyPair(privateKey: Uint8Array, keyType: KeyType.Sign | KeyType.Private): Promise<CryptoKeyPair> {
+        let jwk: JsonWebKey = {};
+        jwk.crv = "P-256";
+        jwk.ext = true;
+        jwk.kty = "EC";
+
+        let publicKey = getCurveByName("secp256r1").G.multiply(privateKey).getEncoded(false);
+        jwk.x = base64.encodeURLSafe(publicKey.slice(1, 33)).substr(0, 43);
+        jwk.y = base64.encodeURLSafe(publicKey.slice(33)).substr(0, 43);
+
+        let privateJWK = { ...jwk, d: base64.encodeURLSafe(privateKey).substr(0, 43) };
+
+        // TODO disallow private export
+        return Promise.all([
+            crypto.subtle.importKey("jwk", privateJWK, { name: keyType == KeyType.Sign ? "ECDSA" : "ECDH", namedCurve: "P-256" }, true, keyType == KeyType.Sign ? ["sign"] : ["deriveKey"]),
+            crypto.subtle.importKey("jwk", jwk, { name: keyType == KeyType.Sign ? "ECDSA" : "ECDH", namedCurve: "P-256" }, true, keyType == KeyType.Sign ? ["verify"] : [])
+        ]).then(keys => ({ privateKey: keys[0], publicKey: keys[1] }));
+    }
+
+    protected static getPublicKey(publicKey: string, keyType: KeyType.Sign | KeyType.Private): PromiseLike<CryptoKey> {
+        let jwk: JsonWebKey = {};
+        jwk.crv = "P-256";
+        jwk.ext = true;
+        jwk.kty = "EC";
+
+        jwk.x = publicKey.substr(0, 43);
+        jwk.y = publicKey.substr(43);
+
+        return crypto.subtle.importKey("jwk", jwk, { name: keyType == KeyType.Sign ? "ECDSA" : "ECDH", namedCurve: "P-256" }, true, keyType == KeyType.Sign ? ["verify"] : []);
+    }
 }
 export class SignKey extends Key<KeyType.Sign> {
     keyType = KeyType.Sign;
 
     verifyKey: VerifyKey;
 
-    constructor(privateKey: CryptoKey, publicKey: CryptoKey) {
-        super(privateKey);
-        this.verifyKey = new VerifyKey(publicKey);
+    constructor(keyPair: CryptoKeyPair) {
+        super(keyPair.privateKey);
+        this.verifyKey = new VerifyKey(keyPair.publicKey);
     }
 
     getKeyType(): KeyType.Sign { return KeyType.Sign };
 
-    static generate(): SignKey;
-    static generate(password: string, salt: string): Promise<SignKey>;
-    static generate(password?: string, salt?: string): SignKey | Promise<SignKey> {
+    static async generate(password?: string, salt?: string): Promise<SignKey> {
         if (password !== undefined && salt !== undefined) {
-            let saltBytes = utf8.encode("42234223" + salt + "sign");
-            return (window as any).argon2.hash({ pass: utf8.encode(password), salt: saltBytes, hashLen: 32, mem: 131072, time: 1, parallelism: 1, type: (window as any).argon2.ArgonType.Argon2id })
-                .then((result: { hash: Uint8Array }) => crypto.subtle.importKey("raw", result.hash, { name: "ECDSA", namedCurve: "P-521" }, false, ["sign"])
-                    .then(k => crypto.subtle.deriveKey({ name: "HKDF", hash: "SHA-512", salt: salt }, k, {})))
-                .catch(() => Promise.reject("error while generating key"));
+            let hashResult: { hash: Uint8Array } = await (window as any).argon2.hash({ pass: utf8.encode(password), salt: utf8.encode("42234223" + salt + "sign"), hashLen: 32, mem: 131072, time: 1, parallelism: 1, type: (window as any).argon2.ArgonType.Argon2id });
+            let keyPair = await Key.getKeyPair(hashResult.hash, KeyType.Sign);
+            return new SignKey(keyPair);
         }
-        return crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-521" }, false, ["sign"]).then(k => new SignKey(k.privateKey, k.publicKey));
-        // return new SignKey(nacl.randomBytes(64));
+        return new SignKey(await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]));
     }
 }
 export class VerifyKey extends Key<KeyType.Verify> {
@@ -63,23 +91,3 @@ export class SecretKey extends Key<"secret"> {
 }
 
 export enum KeyType { Secret = "secretKey", Sign = "signKey", Verify = "verifyKey", Private = "privateKey", Public = "publicKey" }
-
-function getKeyPair(privateKey: Uint8Array, keyType: KeyType.Sign | KeyType.Private): Promise<CryptoKeyPair> {
-    let jwk: JsonWebKey = {};
-    jwk.crv = "P-256";
-    jwk.ext = true;
-    jwk.kty = "EC";
-
-    let publicKey = getCurveByName("secp256r1").G.multiply(privateKey).getEncoded(false);
-    jwk.x = base64.encodeURLSafe(publicKey.slice(1, 33)).substr(0,43);
-    jwk.y = base64.encodeURLSafe(publicKey.slice(33)).substr(0,43);
-    jwk.key_ops = [];
-
-    let privateJWK = { ...jwk, d: base64.encodeURLSafe(privateKey).substr(0,43), key_ops: keyType == KeyType.Sign ? ["sign"] : ["deriveKey"] };
-
-    // TODO disallow export
-    return Promise.all([
-        crypto.subtle.importKey("jwk", privateJWK, { name: keyType == KeyType.Sign ? "ECDSA" : "ECDH", namedCurve: "P-256" }, true, privateJWK.key_ops),
-        crypto.subtle.importKey("jwk", jwk, { name: keyType == KeyType.Sign ? "ECDSA" : "ECDH", namedCurve: "P-256" }, true, [])
-    ]).then(keys => ({ privateKey: keys[0], publicKey: keys[1] }));
-}
