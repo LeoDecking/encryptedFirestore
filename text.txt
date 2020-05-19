@@ -17,3 +17,8 @@ PrivateKey, PublicKey
 SecretKey
 
 Werden weiterhin mit argon2 generiert
+
+
+
+NEEEEIIIIN:
+Hacker können derivedKey abgreifen und damit unfug machen :()

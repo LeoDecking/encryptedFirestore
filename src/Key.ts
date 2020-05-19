@@ -1,25 +1,30 @@
 import * as base64 from "@stablelib/base64";
 import * as utf8 from "@stablelib/utf8";
-import { ObjectsCrypto } from "./ObjectsCrypto";
-// import  from "ecurve";
 
-import nacl from "tweetnacl";
-import { Curve, getCurveByName } from "ecurve";
+import { getCurveByName } from "ecurve";
 
 abstract class Key<K extends KeyType> {
-    private _keyType?: K;
+    abstract keyType: K;
+    abstract alorithm: string;
+    abstract keyUsages: string[];
 
-    key: CryptoKey;
+    readonly key?: CryptoKey;
 
-    constructor(key: CryptoKey) {
+    constructor(key?: CryptoKey) {
         this.key = key;
     }
+}
 
-    abstract getKeyType(): K;
+abstract class PrivateKey<K extends KeyType, Pub extends PublicKey<KeyType>> extends Key<K> {
+    readonly publicKey: Pub;
+    protected readonly publicConstructor?: new (key: CryptoKey) => Pub;
 
-    // TODO subclass private/public key 0>move methods there (auch generate)
-    // (+privateEncryption, publicEncryption)
-    protected static getKeyPair(privateKey: Uint8Array, keyType: KeyType.Sign | KeyType.Private): Promise<CryptoKeyPair> {
+    constructor(keyPair: CryptoKeyPair) {
+        super(keyPair.privateKey);
+        this.publicKey = new this.publicConstructor!(keyPair.publicKey);
+    }
+
+    static async import<K extends PrivateKey<KeyType, PublicKey<KeyType>>>(this: new (keyPair?: CryptoKeyPair) => K, privateKey: Uint8Array): Promise<K> {
         let jwk: JsonWebKey = {};
         jwk.crv = "P-256";
         jwk.ext = true;
@@ -31,14 +36,24 @@ abstract class Key<K extends KeyType> {
 
         let privateJWK = { ...jwk, d: base64.encodeURLSafe(privateKey).substr(0, 43) };
 
+        let dummy = new this();
+
         // TODO disallow private export
-        return Promise.all([
-            crypto.subtle.importKey("jwk", privateJWK, { name: keyType == KeyType.Sign ? "ECDSA" : "ECDH", namedCurve: "P-256" }, true, keyType == KeyType.Sign ? ["sign"] : ["deriveKey"]),
-            crypto.subtle.importKey("jwk", jwk, { name: keyType == KeyType.Sign ? "ECDSA" : "ECDH", namedCurve: "P-256" }, true, keyType == KeyType.Sign ? ["verify"] : [])
-        ]).then(keys => ({ privateKey: keys[0], publicKey: keys[1] }));
+        return new this(await Promise.all([
+            crypto.subtle.importKey("jwk", privateJWK, { name: dummy.alorithm, namedCurve: "P-256" }, true, dummy.keyUsages),
+            crypto.subtle.importKey("jwk", jwk, { name: dummy.alorithm, namedCurve: "P-256" }, true, dummy.publicKey.keyUsages)
+        ]).then(keys => ({ privateKey: keys[0], publicKey: keys[1] })));
     }
 
-    protected static getPublicKey(publicKey: string, keyType: KeyType.Sign | KeyType.Private): PromiseLike<CryptoKey> {
+    static async generate<K extends PrivateKey<KeyType, PublicKey<KeyType>>>(this: new (keyPair?: CryptoKeyPair) => K, password: string, salt: string): Promise<K> {
+        let dummy = new this();
+        let result = await (window as any).argon2.hash({ pass: utf8.encode(password), salt: utf8.encode(salt + dummy.keyType), hashLen: 32, mem: 131072, time: 1, parallelism: 1, type: (window as any).argon2.ArgonType.Argon2id });
+        return await PrivateKey.import.call(this, result.hash);
+    }
+}
+
+abstract class PublicKey<K extends KeyType> extends Key<K> {
+    static async import<K extends PublicKey<KeyType>>(this: new (key?: CryptoKey) => K, publicKey: string): Promise<K> {
         let jwk: JsonWebKey = {};
         jwk.crv = "P-256";
         jwk.ext = true;
@@ -47,47 +62,80 @@ abstract class Key<K extends KeyType> {
         jwk.x = publicKey.substr(0, 43);
         jwk.y = publicKey.substr(43);
 
-        return crypto.subtle.importKey("jwk", jwk, { name: keyType == KeyType.Sign ? "ECDSA" : "ECDH", namedCurve: "P-256" }, true, keyType == KeyType.Sign ? ["verify"] : []);
-    }
-}
-export class SignKey extends Key<KeyType.Sign> {
-    keyType = KeyType.Sign;
+        let dummy = new this();
 
-    verifyKey: VerifyKey;
-
-    constructor(keyPair: CryptoKeyPair) {
-        super(keyPair.privateKey);
-        this.verifyKey = new VerifyKey(keyPair.publicKey);
+        return new this(await crypto.subtle.importKey("jwk", jwk, { name: dummy.alorithm, namedCurve: "P-256" }, true, dummy.keyUsages));
     }
 
-    getKeyType(): KeyType.Sign { return KeyType.Sign };
-
-    static async generate(password?: string, salt?: string): Promise<SignKey> {
-        if (password !== undefined && salt !== undefined) {
-            let hashResult: { hash: Uint8Array } = await (window as any).argon2.hash({ pass: utf8.encode(password), salt: utf8.encode("42234223" + salt + "sign"), hashLen: 32, mem: 131072, time: 1, parallelism: 1, type: (window as any).argon2.ArgonType.Argon2id });
-            let keyPair = await Key.getKeyPair(hashResult.hash, KeyType.Sign);
-            return new SignKey(keyPair);
-        }
-        return new SignKey(await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]));
-    }
-}
-export class VerifyKey extends Key<KeyType.Verify> {
-    getKeyType(): KeyType.Verify { return KeyType.Verify };
-}
-export class SecretKey extends Key<"secret"> {
-    getKeyType() { return KeyType.Secret };
-
-    static generate(): SecretKey;
-    static generate(password: string, salt: string): Promise<SecretKey>;
-    static generate(password?: string, salt?: string): SecretKey | Promise<SecretKey> {
-        if (password !== undefined && salt !== undefined) {
-            return (window as any).argon2.hash({ pass: utf8.encode(password), salt: utf8.encode("42234223" + salt + "secret"), hashLen: 32, mem: 131072, time: 1, parallelism: 1, type: (window as any).argon2.ArgonType.Argon2id })
-                .then((result: { hash: Uint8Array }) => Promise.resolve(new SecretKey(result.hash)))
-                .catch(() => Promise.reject("error while generating key"));
-        }
-
-        return new SecretKey(nacl.randomBytes(32));
+    async export(): Promise<string> {
+        let jwk = await crypto.subtle.exportKey("jwk", this.key!);
+        return jwk.x! + jwk.y!;
     }
 }
 
-export enum KeyType { Secret = "secretKey", Sign = "signKey", Verify = "verifyKey", Private = "privateKey", Public = "publicKey" }
+export class SignKey extends PrivateKey<KeyType.Sign, VerifyKey> {
+    readonly keyType = KeyType.Sign;
+    readonly alorithm = "ECDSA";
+    readonly keyUsages = ["sign"];
+
+    protected readonly publicConstructor = VerifyKey;
+}
+export class VerifyKey extends PublicKey<KeyType.Verify> {
+    readonly keyType = KeyType.Verify;
+    readonly alorithm = "ECDSA";
+    readonly keyUsages = ["verify"];
+}
+export class PrivateEncryptionKey extends PrivateKey<KeyType.PrivateEncryption, PublicEncryptionKey> {
+    readonly keyType = KeyType.PrivateEncryption;
+    readonly alorithm = "ECDH";
+    readonly keyUsages = ["deriveKey"];
+
+    protected readonly publicConstructor = PublicEncryptionKey;
+}
+export class PublicEncryptionKey extends PublicKey<KeyType.PublicEncryption> {
+    readonly keyType = KeyType.PublicEncryption;
+    readonly alorithm = "ECDH";
+    readonly keyUsages = [];
+}
+export class SecretKey extends Key<KeyType.Secret> {
+    readonly keyType = KeyType.Secret;
+    readonly alorithm = "AES-GCM";
+    readonly keyUsages = ["encrypt", "decrypt"];
+
+    static async import(secretKey: Uint8Array): Promise<SecretKey> {
+        let dummy = new this();
+        return new this(await crypto.subtle.importKey("raws", secretKey, dummy.alorithm, true, dummy.keyUsages));
+    }
+
+    static async generate(password?: string, salt?: string): Promise<SecretKey> {
+        let dummy = new this();
+        let result = password
+            ? await (window as any).argon2.hash({ pass: utf8.encode(password), salt: utf8.encode((salt ?? "") + dummy.keyType), hashLen: 32, mem: 131072, time: 1, parallelism: 1, type: (window as any).argon2.ArgonType.Argon2id })
+            : crypto.getRandomValues(new Uint8Array(32));
+        return await SecretKey.import.call(this, result.hash);
+    }
+
+    async wrap(secretKey: DHSecrectKey): Promise<string> {
+        // TODO wrap
+        return "";
+    }
+
+    static async unwrap(wrapped: string, secretKey: DHSecrectKey): Promise<SecretKey> {
+        // TODO unwrap
+        return new SecretKey();
+    }
+
+}
+export class DHSecrectKey extends SecretKey {
+    static async import(secretKey: Uint8Array): Promise<DHSecrectKey> {
+        let dummy = new this();
+        return new this(await crypto.subtle.importKey("raws", secretKey, dummy.alorithm, false, dummy.keyUsages));
+    }
+
+    static async derive(privateEncryptionKey: PrivateEncryptionKey, publicEncryptionKey: PublicEncryptionKey): Promise<DHSecrectKey> {
+        // TODO derive
+        return new DHSecrectKey();
+    }
+}
+
+export enum KeyType { Secret = "secretKey", Sign = "signKey", Verify = "verifyKey", PrivateEncryption = "privateEncryptionKey", PublicEncryption = "publicEncryptionKey" };
