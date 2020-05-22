@@ -1,20 +1,28 @@
 import { AutoId } from "./AutoId";
-import { VerifyKey, SignKey, SecretKey } from "./Key";
+import { VerifyKey, SignKey, PublicEncryptionKey, PrivateEncryptionKey } from "./Key/Keys";
+import { SecretKey } from "./Key/SecretKey";
 import { DatabaseObjectType, GetOwner, DatabaseChildObjectType } from "./DatabaseObjectType";
 import { App } from "./App";
 import { ObjectsCrypto } from "./ObjectsCrypto";
-import { KeyContainer, KeyStore } from "./KeyStore";
+import { KeyContainer } from "./KeyStore";
+
+
+// TODO update encryption / signing
 
 // Every property must be default initialized!
 export abstract class DatabaseObject<Tstring extends string, T extends DatabaseObjectType, P extends DatabaseObjectType | App, ParentIsOwner extends boolean = true> {
     private _type?: Tstring;
     // TODO canEncrypt??
     abstract readonly databaseOptions: {
-        parentIsOwner: ParentIsOwner,
         collection: string,
-        canSign: boolean,
-        ownerMayRead: boolean,
-        ownerMayWrite: boolean,
+
+        parentIsOwner: ParentIsOwner, // --> is the direct parent the owner? / can it write?
+        ownerMayRead: boolean, // --> should the secretKey be encrypted for owner?
+        ownerMayWrite: boolean, // --> is the owner allowed to sign children of this object?
+
+        hasPassword: boolean, // --> should a password for encryption be generated?
+        passwordCanSign: boolean,
+
         encryptedProperties?: string[]
 
     };
@@ -28,11 +36,9 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     get path(): string { return this.parent.path + "/" + this.databaseOptions.collection + "/" + this.id; }
     version: number = 0;
 
-    publicKey?: CryptoKey;
+    publicKey?: PublicEncryptionKey;
     verifyKey?: VerifyKey;
-    publicKeys: CryptoKey[] = [];
-
-    signature?: string = "";
+    publicKeys: PublicEncryptionKey[] = []; // keys, for which the secretKey will be encrypted - without allowed parents, there added automatically
 
 
     constructor(parent: P, id: string = AutoId.newId()) {
@@ -45,16 +51,16 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         return new child(this, id);
     }
 
-    hash(): string {
+    async hash(): Promise<string> {
         let object: any = {};
         Object.keys(this).map(async k => {
             if (this.ignoreProperties.indexOf(k) == -1)
                 object[k] = (this as { [key: string]: any })[k];
         });
-        return ObjectsCrypto.hash(object);
+        return await ObjectsCrypto.hash(object);
     }
 
-    // TODO keycontainer as parameter!!
+    // TODO keycontainer as parameter in every method!!
     // TODO id from path
     static async fromDocumentData<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], documentData: { [key: string]: any }, id: string = AutoId.newId(), opaque: boolean = false, keyContainer: KeyContainer = new KeyContainer()): Promise<T> {
         let object = new this(parent, id);
@@ -127,7 +133,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
             }
 
             documentData["path"] = object.path;
-            if (object.verifyKey) documentData["verifyKey"] = object.verifyKey?.string;
+            if (object.verifyKey) documentData["verifyKey"] = await object.verifyKey?.export;
             if (incrementVersion) documentData["version"]++;
 
             // console.log("signed", await object.app.keyStore.sign(object.owner, documentData, keyContainer));
@@ -144,44 +150,27 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
 
     async getOpaquePassword(password: string): Promise<string> {
-        let opaque: { keyHash?: string, verifyKey?: string } = {};
-        opaque.keyHash = ObjectsCrypto.hash((await SecretKey.generate(password, this.path)).string);
-        if (this.databaseOptions.canSign) opaque.verifyKey = (await SignKey.generate(password, this.path)).verifyKey.string;
+        let opaque: { publicKey?: string, verifyKey?: string } = {};
+        opaque.publicKey = await PrivateEncryptionKey.generate(password, this.path).then(k => k.publicKey.export);
+        if (this.databaseOptions.passwordCanSign) opaque.verifyKey = await SignKey.generate(password, this.path).then(k => k.verifyKey.export);
 
         return btoa(JSON.stringify(opaque));
     }
 
-    setOpaquePasswort(opaque: string): this {
+    async setOpaquePasswort(opaque: string): Promise<this> {
         let o = JSON.parse(atob(opaque));
-        this.keyHash = o["keyHash"];
-        this.verifyKey = o["verifyKey"];
+        this.publicKey = await PublicEncryptionKey.import(o["keyHash"]);
+        if (o["verifyKey"]) this.verifyKey = await VerifyKey.import(o["verifyKey"]);
 
         return this;
     }
 
-    // TODO encrypt signKey for parents?
-    async setPassword(password?: string): Promise<this> {
-        let secretKey: SecretKey;
-        if (password == undefined) secretKey = SecretKey.generate();
-        else secretKey = await SecretKey.generate(password, this.path);
-
-        this.keyHash = ObjectsCrypto.hash(secretKey.string);
-        this.encryptedSecretKey = {};
-        if (this.databaseOptions.ownerMayRead && !App.isApp(this.parent))
-            this.encryptedSecretKey[this.owner.path] = await this.app.keyStore.encrypt(this.owner as DatabaseObjectType, secretKey.string);
-
-        if (this.databaseOptions.canSign) {
-            let signKey: SignKey;
-            if (password == undefined) signKey = SignKey.generate();
-            else signKey = await SignKey.generate(password, this.path);
-
-            this.verifyKey = signKey.verifyKey;
-        }
+    async setPassword(password: string): Promise<this> {
+        this.publicKey = await PrivateEncryptionKey.generate(password, this.path).then(k => k.publicKey);
+        if (this.databaseOptions.passwordCanSign) this.verifyKey = await SignKey.generate(password, this.path).then(k => k.verifyKey);
 
         return this;
     }
-
-
 
 
 
@@ -189,6 +178,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     // TODO keycontainer
 
     // TODO ids from firestore (more than 10)
+    // TODO encryptedFor / signedBy from firestore
 
     static fromFirestore<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], id: string, opaque?: boolean): Promise<T>;
     static fromFirestore<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], id: string, opaque: boolean, onSnapshot: (object: T) => void): () => void;

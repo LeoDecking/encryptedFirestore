@@ -1,7 +1,7 @@
 import firebase from "firebase/app";
-import { VerifyKey } from "./Key";
+import { VerifyKey } from "./Key/Keys";
 import { DatabaseObjectType, DatabaseChildObjectType } from "./DatabaseObjectType";
-import { KeyStore } from "./KeyStore";
+// import { KeyStore } from "./KeyStore";
 import { DatabaseObject } from "./DatabaseObject";
 
 const AppSymbol = Symbol();
@@ -10,11 +10,11 @@ export class App {
     readonly path: string = "";
 
     readonly firebase: firebase.app.App;
-    readonly keyStore: KeyStore;
+    readonly keyStore: any;
     readonly verifyKey: VerifyKey;
 
 
-    constructor(firebaseApp: firebase.app.App, keyStore: KeyStore, verifyKey: VerifyKey) {
+    constructor(firebaseApp: firebase.app.App, keyStore: any, verifyKey: VerifyKey, deviceVerifyKey: VerifyKey) {
         this.firebase = firebaseApp;
         this.keyStore = keyStore;
         this.verifyKey = verifyKey;
