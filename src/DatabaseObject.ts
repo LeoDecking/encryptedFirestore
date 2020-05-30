@@ -1,10 +1,8 @@
 import { AutoId } from "./AutoId";
-import { VerifyKey, SignKey, PublicEncryptionKey, PrivateEncryptionKey } from "./Key/Keys";
-import { SecretKey } from "./Key/SecretKey";
 import { DatabaseObjectType, GetOwner, DatabaseChildObjectType } from "./DatabaseObjectType";
 import { App } from "./App";
-import { ObjectsCrypto } from "./ObjectsCrypto";
 import { KeyContainer } from "./KeyStore";
+import { PublicEncryptionKey, VerifyKey, ObjectsCrypto, PrivateEncryptionKey, SignKey } from "objects-crypto";
 
 
 // TODO update encryption / signing
