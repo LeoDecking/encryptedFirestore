@@ -2,16 +2,10 @@ import { DatabaseObjectType, GetOwner } from "./DatabaseObjectType";
 import { App } from "./App";
 import { SecretKey, ObjectsCrypto, SignKey, PrivateEncryptionKey, ObjectsKeyType } from "objects-crypto";
 
-type Keys = { [path: string]: { privateEncryptionKey?: { encryptedKey: string, persistent: boolean, prompt: boolean, key?: Promise<PrivateEncryptionKey> }, signKey?: { encryptedKey: string, persistent: boolean, prompt: boolean, key?: Promise<SignKey> } } };
-
-// TODO has key
 export class KeyStore {
-    private keys: Keys;
+    private keys: { [path: string]: { privateEncryptionKey?: { encryptedKey?: string, persistent: boolean, prompt: boolean, key?: Promise<PrivateEncryptionKey> }, signKey?: { encryptedKey?: string, persistent: boolean, prompt: boolean, key?: Promise<SignKey> } } };;
     private passwordCheck: string;
     private getStoragePassword: (passwordCheck: string) => Promise<string>;
-
-    // TODO no persistentKey set?
-    // TODO check storageKey
 
     constructor(json: string, getStoragePassword: (passwordCheck: string) => Promise<string>, out?: { keyContainer?: KeyContainer }) {
         let stored = JSON.parse(json);
@@ -32,7 +26,7 @@ export class KeyStore {
     }
 
     async export(): Promise<string> {
-        let persistentKeys: Keys = {};
+        let persistentKeys: KeyStore["keys"] = {};
         Object.entries(this.keys).forEach(k => {
             if (k[1].privateEncryptionKey?.persistent || k[1].signKey?.persistent) {
                 persistentKeys[k[0]] = {};
@@ -91,52 +85,71 @@ export class KeyStore {
         return new KeyContainer(keys, requestPromptKeys!);
     }
 
-
-    // TODO
-    getKeyPaths(keyType: ObjectsKeyType.PrivateEncryption | ObjectsKeyType.Sign): string[] {
-        return Object.keys(this.keys);
+    getKeyPaths(keyType: ObjectsKeyType.PrivateEncryption | ObjectsKeyType.Sign, keyContainer?: KeyContainer): string[] {
+        return keyContainer ? keyContainer.getKeyPaths(keyType) : Object.entries(this.keys).filter(k => k[1][keyType]).map(k => k[0]);;
     }
 
+    // TODO hasKey
+
+    // TODO getKey
+
     // TODO canSign/canRead
-    // TODO test
-    async setPassword(path: string, password: string, secretKeyOptions: StorageOptions = { store: "none" }, signKeyOptions: StorageOptions = { store: "none" }, keyContainer: KeyContainer = new KeyContainer()): Promise<KeyContainer> {
+    // TODO minimize / beautify
+    async setPassword(path: string, password: string, privateEncryptionKeyOptions: StorageOptions = { store: "none" }, signKeyOptions: StorageOptions = { store: "none" }, keyContainer: KeyContainer = this.createKeyContainer()): Promise<KeyContainer> {
+        let storagePasswordPromise: Promise<string> | null = ((privateEncryptionKeyOptions.storageKeyPrompt || privateEncryptionKeyOptions.store == "persistent")
+            || (signKeyOptions.storageKeyPrompt || signKeyOptions.store == "persistent")) ? this.getStoragePassword(this.passwordCheck) : null;
+        let storageKeyPromise: Promise<SecretKey> | null = (privateEncryptionKeyOptions.storageKeyPrompt && signKeyOptions.storageKeyPrompt) ? null : storagePasswordPromise!.then(storagePassword => SecretKey.generate(storagePassword, "withoutPrompt"));
+        let storageKeyPromptPromise: Promise<SecretKey> | null = (!privateEncryptionKeyOptions.storageKeyPrompt && !signKeyOptions.storageKeyPrompt) ? null : storagePasswordPromise!.then(storagePassword => SecretKey.generate(storagePassword, "prompt"));
+
         await Promise.all([
-            secretKeyOptions.store == "none" ? Promise.resolve() : SecretKey.generate(password, path).then(async secretKey => this.setKey(secretKey, path, secretKeyOptions, keyContainer)),
-            signKeyOptions.store == "none" ? Promise.resolve() : SignKey.generate(password, path).then(async signKey => this.setKey(signKey, path, signKeyOptions, keyContainer))
-        ] as Promise<KeyContainer | void>[]);
+            privateEncryptionKeyOptions.store == "none" ? undefined : PrivateEncryptionKey.generateBits(password, path + ObjectsKeyType.PrivateEncryption).then(bits => Promise.all([
+                PrivateEncryptionKey.import(bits),
+                privateEncryptionKeyOptions.storageKeyPrompt || privateEncryptionKeyOptions.store == "persistent" ? (privateEncryptionKeyOptions.storageKeyPrompt ? storageKeyPromptPromise : storageKeyPromise)?.then(secretKey => ObjectsCrypto.encrypt(bits, secretKey)) : undefined
+            ] as [Promise<PrivateEncryptionKey>, Promise<string> | undefined])).then(p => this.setKey(path, p[0], p[1], privateEncryptionKeyOptions, keyContainer)),
+
+            signKeyOptions.store == "none" ? undefined : SignKey.generateBits(password, path + ObjectsKeyType.Sign).then(bits => Promise.all([
+                SignKey.import(bits),
+                signKeyOptions.storageKeyPrompt || signKeyOptions.store == "persistent" ? (signKeyOptions.storageKeyPrompt ? storageKeyPromptPromise : storageKeyPromise)?.then(secretKey => ObjectsCrypto.encrypt(bits, secretKey)) : undefined
+            ] as [Promise<SignKey>, Promise<string> | undefined])).then(p => this.setKey(path, p[0], p[1], signKeyOptions, keyContainer))
+        ] as Promise<KeyContainer>[]);
         return keyContainer;
     }
 
     // TODO überprüfen, ob richtig?
-    async setKey(key: SecretKey | SignKey, path: string, storageOptions: StorageOptions = { store: "once" }, keyContainer: KeyContainer = new KeyContainer()): Promise<KeyContainer> {
+    async setKey(path: string, key: PrivateEncryptionKey | SignKey, encryptedKey?: string, storageOptions: StorageOptions = { store: "once" }, keyContainer: KeyContainer = this.createKeyContainer()): Promise<KeyContainer> {
         if (storageOptions.store == "once") {
-            if (!keyContainer.keys[path]) keyContainer.keys[path] = {};
-            (keyContainer.keys[path] as { [type: string]: SecretKey | SignKey })[key.getKeyType()] = key;
+            keyContainer.setKey(path, key);
         }
-        else {
-            if (!this.keys[path]) this.keys[path] = {};
-            this.keys[path][key.getKeyType() as KeyType.Secret | KeyType.Sign] = {
-                key: key.encrypt(await this.getStorageKey(storageOptions.storageKeyPrompt == "always", keyContainer)),
+        else if (storageOptions.store != "none") {
+            let keys = this.keys[path];
+            if (!keys) keys = (this.keys[path] = {});
+
+            keys[key.keyType] = {
+                key: (keys[key.keyType]?.prompt ? Promise.reject() : Promise.resolve(key)) as Promise<SignKey> & Promise<PrivateEncryptionKey>,
                 persistent: storageOptions.store == "persistent",
                 prompt: storageOptions.storageKeyPrompt == "always"
             };
+            if (keys[key.keyType]!.persistent || keys[key.keyType]!.prompt) keys[key.keyType]!.encryptedKey = encryptedKey;
+
         }
         return keyContainer;
     }
 
-    async deletePassword(path: string) {
+    async deletePassword(path: string, keyContainer?: KeyContainer) {
         delete this.keys[path];
+        if (keyContainer) {
+            keyContainer.deleteKey(path, ObjectsKeyType.PrivateEncryption);
+            keyContainer.deleteKey(path, ObjectsKeyType.Sign);
+        }
     }
-    async deleteKey(type: KeyType.Secret | KeyType.Sign, path: string) {
-        delete this.keys[path][type == KeyType.Secret ? "secretKey" : "signKey"];
+    async deleteKey(path: string, keyType: ObjectsKeyType.PrivateEncryption | ObjectsKeyType.Sign, keyContainer?: KeyContainer) {
+        if (this.keys[path]) {
+            delete this.keys[path][keyType];
+            if (Object.keys(this.keys[path]).length == 0) delete this.keys[path];
+        }
+        if (keyContainer) keyContainer.deleteKey(path, keyType);
     }
 
-    private async decryptSecretKey(key: { key: string, persistent: boolean, prompt: boolean }, keyContainer: KeyContainer): Promise<SecretKey> {
-        return SecretKey.decrypt(key.key, await this.getStorageKey(key.prompt, keyContainer));
-    }
-    private async decryptSignKey(key: { key: string, persistent: boolean, prompt: boolean }, keyContainer: KeyContainer): Promise<SignKey> {
-        return SignKey.decrypt(key.key, await this.getStorageKey(key.prompt, keyContainer));
-    }
 
     // TODO auch für signkeys??
     // TODO Achtung: Owner kann secretKey ändern und falschen Key rausgeben, kann dann nicht mehr von oben kontrolliert werden :(
@@ -219,6 +232,10 @@ export class KeyContainer {
         this.requestPromptKeys = () => { requestPromptKeys(); this.requestPromptKeys = () => { } };
     }
 
+    getKeyPaths(keyType: ObjectsKeyType.PrivateEncryption | ObjectsKeyType.Sign): string[] {
+        return Object.entries(this.keys).filter(k => k[1][keyType]).map(k => k[0]);
+    }
+
     // TODO set return type according to keyType
     async getKey(path: string, keyType: ObjectsKeyType.PrivateEncryption | ObjectsKeyType.Sign): Promise<PrivateEncryptionKey | SignKey> {
         let keys = this.keys[path];
@@ -227,7 +244,19 @@ export class KeyContainer {
         if (keys[keyType]!.prompt) this.requestPromptKeys();
         return keys[keyType]!.key;
     }
-    // TODO setKey
+
+    setKey(path: string, key: PrivateEncryptionKey | SignKey) {
+        let keys = this.keys[path];
+        if (!keys) keys = (this.keys[path] = {});
+
+        keys[key.keyType] = { key: Promise.resolve(key) as Promise<SignKey & PrivateEncryptionKey>, prompt: false };
+    }
+
+    deleteKey(path: string, keyType: ObjectsKeyType.PrivateEncryption | ObjectsKeyType.Sign) {
+        if (!this.keys[path]?.[keyType]) return;
+        if (Object.keys(this.keys[path]).length > 1) delete this.keys[path][keyType];
+        else delete this.keys[path];
+    }
 }
 
 export interface StorageOptions {
