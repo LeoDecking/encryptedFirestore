@@ -2,6 +2,8 @@ import { DatabaseObjectType, GetOwner } from "./DatabaseObjectType";
 import { App } from "./App";
 import { SecretKey, ObjectsCrypto, SignKey, PrivateEncryptionKey, ObjectsKeyType } from "objects-crypto";
 
+
+// TODO device signKey/secretKey
 export class KeyStore {
     private keys: { [path: string]: { privateEncryptionKey?: { encryptedKey?: string, persistent: boolean, prompt: boolean, key?: Promise<PrivateEncryptionKey> }, signKey?: { encryptedKey?: string, persistent: boolean, prompt: boolean, key?: Promise<SignKey> } } };;
     private passwordCheck: string;
@@ -19,8 +21,8 @@ export class KeyStore {
         let generateStorageKey = storagePasswordPromise.then(storagePassword => SecretKey.generate(storagePassword, "withoutPrompt"));
 
         Object.values(this.keys).forEach(k => {
-            if (k.privateEncryptionKey) (k.privateEncryptionKey!.prompt) ? Promise.reject() : k.privateEncryptionKey.key = generateStorageKey.then(async storageKey => await PrivateEncryptionKey.import(await ObjectsCrypto.decrypt(k.privateEncryptionKey!.encryptedKey, storageKey)));
-            if (k.signKey) (k.signKey!.prompt) ? Promise.reject() : k.signKey.key = generateStorageKey.then(async storageKey => await SignKey.import(await ObjectsCrypto.decrypt(k.signKey!.encryptedKey, storageKey)));
+            if (k.privateEncryptionKey) (k.privateEncryptionKey!.prompt) ? Promise.reject() : k.privateEncryptionKey.key = generateStorageKey.then(async storageKey => await PrivateEncryptionKey.import(await ObjectsCrypto.decrypt(k.privateEncryptionKey!.encryptedKey!, storageKey)));
+            if (k.signKey) (k.signKey!.prompt) ? Promise.reject() : k.signKey.key = generateStorageKey.then(async storageKey => await SignKey.import(await ObjectsCrypto.decrypt(k.signKey!.encryptedKey!, storageKey)));
         });
         if (out) out.keyContainer = this.createKeyContainer(storagePasswordPromise);
     }
@@ -89,9 +91,9 @@ export class KeyStore {
         return keyContainer ? keyContainer.getKeyPaths(keyType) : Object.entries(this.keys).filter(k => k[1][keyType]).map(k => k[0]);;
     }
 
-    // TODO hasKey
-
-    // TODO getKey
+    hasKey(path: string, keyType: ObjectsKeyType.PrivateEncryption | ObjectsKeyType.Sign, keyContainer?: KeyContainer): boolean {
+        return keyContainer ? keyContainer.hasKey(path, keyType) : !!this.keys[path]?.[keyType];
+    }
 
     // TODO canSign/canRead
     // TODO minimize / beautify
@@ -115,12 +117,11 @@ export class KeyStore {
         return keyContainer;
     }
 
-    // TODO überprüfen, ob richtig?
+    // TODO set return type according to keyType
     async setKey(path: string, key: PrivateEncryptionKey | SignKey, encryptedKey?: string, storageOptions: StorageOptions = { store: "once" }, keyContainer: KeyContainer = this.createKeyContainer()): Promise<KeyContainer> {
-        if (storageOptions.store == "once") {
-            keyContainer.setKey(path, key);
-        }
-        else if (storageOptions.store != "none") {
+        keyContainer.setKey(path, key);
+
+        if (storageOptions.store != "none" && storageOptions.store != "once") {
             let keys = this.keys[path];
             if (!keys) keys = (this.keys[path] = {});
 
@@ -133,6 +134,16 @@ export class KeyStore {
 
         }
         return keyContainer;
+    }
+
+    async getKey(path: string, keyType: ObjectsKeyType.PrivateEncryption | ObjectsKeyType.Sign, keyContainer?: KeyContainer): Promise<PrivateEncryptionKey | SignKey> {
+        if (keyContainer) {
+            return keyContainer.getKey(path, keyType);
+        } else {
+            let keys = this.keys[path];
+            if (!keys?.[keyType]) throw new Error("key not found");
+            return keys[keyType]!.key!;
+        }
     }
 
     async deletePassword(path: string, keyContainer?: KeyContainer) {
@@ -148,77 +159,6 @@ export class KeyStore {
             if (Object.keys(this.keys[path]).length == 0) delete this.keys[path];
         }
         if (keyContainer) keyContainer.deleteKey(path, keyType);
-    }
-
-
-    // TODO auch für signkeys??
-    // TODO Achtung: Owner kann secretKey ändern und falschen Key rausgeben, kann dann nicht mehr von oben kontrolliert werden :(
-    // Es können nur Objekte direkt gesehen werden, die parent (n-ten Grades) vom object sind
-    // 1. SecretKey im KeyStore gespeichert
-    // 2. SecretKey verlinkt, der im KeyStore gespeichert ist
-    // 3. SecretKey vom nächstbesten Parent verlinkt (nur der "niedrigste" Parent, der verlinkt ist, wird betrachtet), auf den 1. oder 2. oder 3. zutrifft
-    private async getSecretKey(object: DatabaseObjectType, keyContainer: KeyContainer): Promise<SecretKey> {
-        // console.log("getSecretKey", object.path);
-        // TODO catch
-        try {
-            if (keyContainer.keys[object.path]?.secretKey) {
-                return keyContainer.keys[object.path].secretKey!;
-            }
-            else if (this.keys[object.path]?.secretKey) {
-                // console.log(1, SecretKey.decrypt(this.keys[object.path].secretKey!, storageKeySecret));
-                return await this.decryptSecretKey(this.keys[object.path].secretKey!, keyContainer);
-            } else {
-                let path = Object.keys(object.encryptedSecretKey).find(p => keyContainer.keys[p]?.secretKey || this.keys[p]?.secretKey);
-                if (path) {
-                    // console.log(2);
-                    return SecretKey.decrypt(object.encryptedSecretKey[path], keyContainer.keys[path]?.secretKey ? keyContainer.keys[path].secretKey! : await this.decryptSecretKey(this.keys[path].secretKey!, keyContainer));
-                }
-                else {
-                    let current: DatabaseObjectType = object;
-                    // TODO nochmal drüber nachdenken
-                    while (!App.isApp(current.owner)) {
-                        current = current.owner;
-                        if (object.encryptedSecretKey[current.path]) {
-                            console.log("owner", current);
-                            return SecretKey.decrypt(object.encryptedSecretKey[current.path], await this.getSecretKey(current, keyContainer));
-                        }
-                    }
-                }
-                throw new Error("no secretkey");
-            }
-        } catch (error) {
-            console.log(error);
-            throw new Error(error);
-        }
-    }
-
-    encrypt(object: DatabaseObjectType, property: any, keyContainer: KeyContainer = new KeyContainer()): Promise<string> {
-        return this.getSecretKey(object, keyContainer).then(key => ObjectsCrypto.encrypt(property, key));
-    }
-
-    decrypt(object: DatabaseObjectType, property: string, keyContainer: KeyContainer = new KeyContainer()): Promise<any> {
-        return this.getSecretKey(object, keyContainer).then(key => ObjectsCrypto.decrypt(property, key));
-    }
-
-    // TODO getSignKey
-    sign<T extends DatabaseObjectType>(owner: GetOwner<T>, object: T, keyContainer: KeyContainer = new KeyContainer()): Promise<T> {
-        if (!this.keys[owner.path]?.signKey && !keyContainer.keys[owner.path]?.signKey) return Promise.reject("no signkey");
-        let o = { ...object };
-        delete o.signature;
-        return (keyContainer.keys[owner.path]?.signKey ? Promise.resolve(keyContainer.keys[owner.path].signKey!) : this.decryptSignKey(this.keys[owner.path].signKey!, keyContainer)).then(signKey => ({ ...ObjectsCrypto.sortObject(object), signature: ObjectsCrypto.sign(o, signKey) }));
-    }
-
-    verify<T extends DatabaseObjectType>(owner: GetOwner<T>, object: T): T {
-        if (!object) throw new Error("undefined object");
-        if (!object.signature) throw new Error("no signature");
-        if (!owner.verifyKey) throw new Error("no verifykey");
-
-        let o = { ...object };
-        delete o.signature;
-        if (ObjectsCrypto.verify(o, object.signature, owner.verifyKey!))
-            return object;
-        else
-            throw new Error("wrong signature");
     }
 }
 
@@ -236,13 +176,8 @@ export class KeyContainer {
         return Object.entries(this.keys).filter(k => k[1][keyType]).map(k => k[0]);
     }
 
-    // TODO set return type according to keyType
-    async getKey(path: string, keyType: ObjectsKeyType.PrivateEncryption | ObjectsKeyType.Sign): Promise<PrivateEncryptionKey | SignKey> {
-        let keys = this.keys[path];
-        if (!keys?.[keyType]) throw new Error("key not found");
-
-        if (keys[keyType]!.prompt) this.requestPromptKeys();
-        return keys[keyType]!.key;
+    hasKey(path: string, keyType: ObjectsKeyType.PrivateEncryption | ObjectsKeyType.Sign): boolean {
+        return !!this.keys[path]?.[keyType];
     }
 
     setKey(path: string, key: PrivateEncryptionKey | SignKey) {
@@ -250,6 +185,15 @@ export class KeyContainer {
         if (!keys) keys = (this.keys[path] = {});
 
         keys[key.keyType] = { key: Promise.resolve(key) as Promise<SignKey & PrivateEncryptionKey>, prompt: false };
+    }
+
+    // TODO set return type according to keyType
+    async getKey(path: string, keyType: ObjectsKeyType.PrivateEncryption | ObjectsKeyType.Sign): Promise<PrivateEncryptionKey | SignKey> {
+        let keys = this.keys[path];
+        if (!keys?.[keyType]) throw new Error("key not found");
+
+        if (keys[keyType]!.prompt) this.requestPromptKeys();
+        return keys[keyType]!.key;
     }
 
     deleteKey(path: string, keyType: ObjectsKeyType.PrivateEncryption | ObjectsKeyType.Sign) {

@@ -1,8 +1,9 @@
 import firebase from "firebase/app";
-import { VerifyKey } from "./Key/Keys";
 import { DatabaseObjectType, DatabaseChildObjectType } from "./DatabaseObjectType";
 // import { KeyStore } from "./KeyStore";
 import { DatabaseObject } from "./DatabaseObject";
+import { KeyStore } from "./KeyStore";
+import { PublicEncryptionKey, VerifyKey } from "objects-crypto";
 
 const AppSymbol = Symbol();
 export class App {
@@ -10,14 +11,18 @@ export class App {
     readonly path: string = "";
 
     readonly firebase: firebase.app.App;
-    readonly keyStore: any;
+    readonly keyStore: KeyStore;
+
     readonly verifyKey: VerifyKey;
+    readonly publicKey: PublicEncryptionKey;
 
 
-    constructor(firebaseApp: firebase.app.App, keyStore: any, verifyKey: VerifyKey, deviceVerifyKey: VerifyKey) {
+    // TODO deviceVerify/publicKey
+    constructor(firebaseApp: firebase.app.App, keyStore: any, verifyKey: VerifyKey, publicKey: PublicEncryptionKey) {
         this.firebase = firebaseApp;
         this.keyStore = keyStore;
         this.verifyKey = verifyKey;
+        this.publicKey = publicKey;
     }
 
     static isApp(parent: DatabaseObjectType | App): parent is App {

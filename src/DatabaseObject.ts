@@ -2,10 +2,26 @@ import { AutoId } from "./AutoId";
 import { DatabaseObjectType, GetOwner, DatabaseChildObjectType } from "./DatabaseObjectType";
 import { App } from "./App";
 import { KeyContainer } from "./KeyStore";
-import { PublicEncryptionKey, VerifyKey, ObjectsCrypto, PrivateEncryptionKey, SignKey } from "objects-crypto";
+import { PublicEncryptionKey, VerifyKey, ObjectsCrypto, PrivateEncryptionKey, SignKey, SecretKey, ObjectsKeyType } from "objects-crypto";
+import { app } from "firebase";
+import { PublicKey } from "objects-crypto/dist/Key/Keys";
 
 
-// TODO update encryption / signing
+type DocumentData = {
+    [key: string]: any,
+    encryptedProperties?:
+    {
+        publicKey: string,
+        encrypted: string,
+        encryptedPrivateKey: { [path: string]: [string, string] } //[publicKey, encryptedPrivateKey]
+        ownerEncryptedPrivateKey: { [path: string]: [string, string] } //[publicKey, encryptedPrivateKey]
+    },
+    signature?: {
+        signature: string,
+        ownerPath: string,
+        verifyKey: string
+    }
+};
 
 // Every property must be default initialized!
 export abstract class DatabaseObject<Tstring extends string, T extends DatabaseObjectType, P extends DatabaseObjectType | App, ParentIsOwner extends boolean = true> {
@@ -36,7 +52,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
     publicKey?: PublicEncryptionKey;
     verifyKey?: VerifyKey;
-    publicKeys: PublicEncryptionKey[] = []; // keys, for which the secretKey will be encrypted - without allowed parents, there added automatically
+    publicKeys?: { [path: string]: PublicEncryptionKey }; // keys, for which the secretKey will be encrypted - without allowed parents, there added automatically
 
 
     constructor(parent: P, id: string = AutoId.newId()) {
@@ -60,10 +76,27 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
     // TODO keycontainer as parameter in every method!!
     // TODO id from path
-    static async fromDocumentData<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], documentData: { [key: string]: any }, id: string = AutoId.newId(), opaque: boolean = false, keyContainer: KeyContainer = new KeyContainer()): Promise<T> {
+    static async fromDocumentData<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], documentData: DocumentData, id: string = AutoId.newId(), opaque: boolean = false, keyContainer?: KeyContainer): Promise<T> {
+        if (!documentData.signature) throw new Error("no signature");
+
         let object = new this(parent, id);
-        object.app.keyStore.verify(object.owner as GetOwner<T>, documentData as T);
         if (documentData.path != object.path) throw new Error("wrong path: " + object.path);
+
+
+        let owner: DatabaseObjectType | App;
+        for (let o: DatabaseObjectType = object; !App.isApp(o) && o.databaseOptions.ownerMayWrite; o = o.owner as DatabaseObjectType) {
+            if (o.owner.path == documentData.signature.ownerPath) {
+                if (o.owner.verifyKey && await o.owner.verifyKey?.export == documentData.signature.verifyKey) owner = o;
+                else throw new Error("wrong verifyKey");
+            }
+        }
+        if (!owner!) throw new Error("wrong signature's owner");
+
+        let verifyObject = { ...documentData };
+        delete verifyObject.signature;
+
+        if (!await ObjectsCrypto.verify(verifyObject, documentData.signature.signature, owner!.verifyKey!)) throw new Error("wrong signature");
+
 
 
         Object.keys(object).filter(k => object.ignoreProperties.indexOf(k) == -1 && (!object.databaseOptions.encryptedProperties || object.databaseOptions.encryptedProperties.indexOf(k) == -1)).forEach(k =>
@@ -71,29 +104,49 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         );
 
         if (!opaque && object.databaseOptions.encryptedProperties?.length && documentData.encryptedProperties) {
-            let encryptedProperties: { [key: string]: any } = await ObjectsCrypto.sortObject(await object.app.keyStore.decrypt(object, documentData.encryptedProperties, keyContainer), true);
+            if (!keyContainer) keyContainer = (App.isApp(parent) ? parent : (parent as DatabaseObjectType).app).keyStore.createKeyContainer();
+
+            let publicEncryptionKey = await PublicEncryptionKey.import(documentData.encryptedProperties.publicKey);
+
+
+            let secretKey: SecretKey;
+
+            let publicKeys = { ...documentData.encryptedProperties.ownerEncryptedPrivateKey, ...documentData.encryptedProperties.encryptedPrivateKey };
+            let encryptionKeyPaths = Object.keys(publicKeys).filter(k => object.app.keyStore.hasKey(k, ObjectsKeyType.PrivateEncryption, keyContainer));
+            for (let i = 0; i < encryptionKeyPaths.length; i++) {
+                let privateEncryptionKey = await object.app.keyStore.getKey(encryptionKeyPaths[i], ObjectsKeyType.PrivateEncryption, keyContainer) as PrivateEncryptionKey;
+
+                if (await privateEncryptionKey.publicKey.export == publicKeys[encryptionKeyPaths[i]][0]) {
+                    secretKey = await SecretKey.import(await ObjectsCrypto.decrypt(publicKeys[encryptionKeyPaths[i]][1], await SecretKey.derive(privateEncryptionKey, publicEncryptionKey)));
+                    break;
+                } else
+                    console.log("wrong publicEncryptionKey:", publicKeys[encryptionKeyPaths[i]][0])
+            }
+
+            if (!secretKey!) throw new Error("no privateEncryptionKey");
+            let encryptedProperties: { [key: string]: any } = await ObjectsCrypto.sortObject(await ObjectsCrypto.decrypt(documentData.encryptedProperties.encrypted, secretKey!), true);
 
             Object.keys(object).filter(k => object.ignoreProperties.indexOf(k) == -1 && object.databaseOptions.encryptedProperties?.indexOf(k) != -1).forEach(k =>
                 (object as { [key: string]: any })[k] = ObjectsCrypto.sortObject(encryptedProperties[k], true)
             );
 
         }
-        // else if(object.databaseOptions.encryptedProperties?.length) {
-        //     await Promise.all(Object.keys(object).filter(k => object.ignoreProperties.indexOf(k) == -1 && object.databaseOptions.encryptedProperties?.indexOf(k) != -1).map(async k =>
-        //         (object as { [key: string]: any })[k] = Crypto.sortObject(await Crypto.sortObject(await object.app.keyStore.decrypt(object, documentData[k], keyContainer), true), true)
-        //     ));
-        // }
 
-        if (documentData.verifyKey) object.verifyKey = new VerifyKey(documentData.verifyKey);
+        if (documentData.verifyKey) object.verifyKey = await VerifyKey.import(documentData.verifyKey);
+        if (documentData.publicKey) object.publicKey = await PublicEncryptionKey.import(documentData.publicKey);
+        if (Object.keys(documentData.encryptedProperties?.encryptedPrivateKey ?? {}).length) {
+            object.publicKeys = {};
+            await Promise.all(Object.entries(documentData.encryptedProperties!.encryptedPrivateKey).map(async k => object.publicKeys![k[0]] = await PublicEncryptionKey.import(k[1][0])));
+        }
 
         return object as T;
     }
-    // TODO test
-    async childFromDocumentData<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, documentData: { [key: string]: any }, id: string = AutoId.newId(), opaque: boolean = false, keyContainer: KeyContainer = new KeyContainer()): Promise<C> {
+
+    async childFromDocumentData<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, documentData: DocumentData, id: string = AutoId.newId(), opaque: boolean = false, keyContainer?: KeyContainer): Promise<C> {
         return await DatabaseObject.fromDocumentData.call(child, parent, documentData, id, opaque, keyContainer);
     }
 
-    async updateFromDocumentData(constructor: new (parent: P, id?: string) => T, documentData: { [key: string]: any }, opaque: boolean = false, keyContainer: KeyContainer = new KeyContainer()): Promise<this> {
+    async updateFromDocumentData(constructor: new (parent: P, id?: string) => T, documentData: DocumentData, opaque: boolean = false, keyContainer?: KeyContainer): Promise<this> {
         let updated = await DatabaseObject.fromDocumentData.call(constructor, this.parent, documentData, this.id, opaque, keyContainer);
         Object.keys(this).forEach(k => (this as { [key: string]: any })[k] = updated[k]);
         return this;
@@ -111,11 +164,13 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         return this;
     }
 
-    // TODO test
-    // TODO signature has to be different because of other encryption salt 😬
-    static async toDocumentData(objects: DatabaseObjectType[], incrementVersion = false, keyContainer: KeyContainer = new KeyContainer()): Promise<{ [key: string]: any }[]> {
+    static async toDocumentData(objects: DatabaseObjectType[], incrementVersion = false, keyContainer?: KeyContainer): Promise<DocumentData[]> {
+        if (objects.length == 0) return [];
+
+        if (!keyContainer) keyContainer = objects[0].app.keyStore.createKeyContainer();
+
         return await Promise.all(objects.map(async object => {
-            let documentData: any = {};
+            let documentData: DocumentData = {};
 
             Object.keys(object).filter(k => object.ignoreProperties.indexOf(k) == -1 && (!object.databaseOptions.encryptedProperties || object.databaseOptions.encryptedProperties.indexOf(k) == -1)).forEach(k =>
                 documentData[k] = (object as { [key: string]: any })[k]
@@ -127,45 +182,83 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
                     encryptedProperties[k] = (object as { [key: string]: any })[k]
                 );
 
-                documentData.encryptedProperties = await object.app.keyStore.encrypt(object, encryptedProperties, keyContainer);
+                let secretKey = await SecretKey.generate();
+
+
+                let privateEncryptionKey = await PrivateEncryptionKey.generate();
+
+                let encryptedPrivateKey: { [path: string]: [string, string] } = {};
+                let ownerEncryptedPrivateKey: { [path: string]: [string, string] } = {};
+
+                let ownerPublicKeys: { [path: string]: PublicEncryptionKey } = {};
+                for (let o: DatabaseObjectType = object; !App.isApp(o) && o.databaseOptions.ownerMayRead; o = o.owner as DatabaseObjectType) ownerPublicKeys[o.owner.path] = o.owner.publicKey!;
+                if (object.databaseOptions.hasPassword && object.publicKey) ownerPublicKeys[object.path] = object.publicKey;
+
+                await Promise.all([
+                    ...Object.entries(object.publicKeys ?? {}).filter(k => !ownerPublicKeys[k[0]]).map(async publicKey => encryptedPrivateKey[await publicKey[0]] = [await publicKey[1].export, await ObjectsCrypto.encrypt(await secretKey.export, await SecretKey.derive(privateEncryptionKey, publicKey[1]))]),
+                    ...Object.entries(ownerPublicKeys).map(async publicKey => ownerEncryptedPrivateKey[await publicKey[0]] = [await publicKey[1].export, await ObjectsCrypto.encrypt(await secretKey.export, await SecretKey.derive(privateEncryptionKey, publicKey[1]))])
+                ]);
+
+
+                documentData.encryptedProperties = {
+                    encrypted: await ObjectsCrypto.encrypt(encryptedProperties, secretKey),
+                    publicKey: await privateEncryptionKey.publicKey.export,
+                    encryptedPrivateKey: encryptedPrivateKey,
+                    ownerEncryptedPrivateKey: ownerEncryptedPrivateKey
+                };
             }
 
             documentData["path"] = object.path;
             if (object.verifyKey) documentData["verifyKey"] = await object.verifyKey?.export;
+            if (object.publicKey) documentData["publicKey"] = await object.publicKey?.export;
             if (incrementVersion) documentData["version"]++;
 
-            // console.log("signed", await object.app.keyStore.sign(object.owner, documentData, keyContainer));
-            try {
-                return object.app.keyStore.verify(object.parent, documentData);
-            } catch {
-                return await object.app.keyStore.sign(object.owner, documentData, keyContainer);
+
+            let signKey: SignKey;
+            let ownerPath: string;
+            for (let o: DatabaseObjectType = object; !App.isApp(o) && o.databaseOptions.ownerMayWrite; o = o.owner as DatabaseObjectType) {
+                if (object.app.keyStore.hasKey(o.owner.path, ObjectsKeyType.Sign, keyContainer)) {
+                    signKey = await object.app.keyStore.getKey(o.owner.path, ObjectsKeyType.Sign) as SignKey;
+                    ownerPath = o.owner.path;
+                }
             }
+
+            // TODO deviceSignKey
+            if (!signKey!) throw new Error("no signKey");
+
+            documentData.signature = {
+                signature: await ObjectsCrypto.sign(documentData, signKey!),
+                ownerPath: ownerPath!,
+                verifyKey: await signKey!.verifyKey.export
+            };
+
+            // console.log("signed", documentData);
+
+            return documentData;
         }));
     }
-    async toDocumentData(incrementVersion = false, keyContainer: KeyContainer = new KeyContainer()): Promise<{ [key: string]: any }> {
+    async toDocumentData(incrementVersion = false, keyContainer?: KeyContainer): Promise<{ [key: string]: any }> {
         return (await DatabaseObject.toDocumentData([this], incrementVersion, keyContainer))[0];
     }
 
 
     async getOpaquePassword(password: string): Promise<string> {
         let opaque: { publicKey?: string, verifyKey?: string } = {};
-        opaque.publicKey = await PrivateEncryptionKey.generate(password, this.path).then(k => k.publicKey.export);
-        if (this.databaseOptions.passwordCanSign) opaque.verifyKey = await SignKey.generate(password, this.path).then(k => k.verifyKey.export);
+        [opaque.publicKey, opaque.verifyKey] = await Promise.all([PrivateEncryptionKey.generate(password, this.path).then(k => k.publicKey.export), this.databaseOptions.passwordCanSign ? SignKey.generate(password, this.path).then(k => k.verifyKey.export) : undefined]);
+        if (!this.databaseOptions.passwordCanSign) delete opaque.verifyKey;
 
         return btoa(JSON.stringify(opaque));
     }
-
     async setOpaquePasswort(opaque: string): Promise<this> {
         let o = JSON.parse(atob(opaque));
-        this.publicKey = await PublicEncryptionKey.import(o["keyHash"]);
-        if (o["verifyKey"]) this.verifyKey = await VerifyKey.import(o["verifyKey"]);
+        [this.publicKey, this.verifyKey] = await Promise.all([PublicEncryptionKey.import(o["keyHash"]), o["verifyKey"] ? await VerifyKey.import(o["verifyKey"]) : undefined]);
+        if (!this.databaseOptions.passwordCanSign) delete this.verifyKey;
 
         return this;
     }
-
     async setPassword(password: string): Promise<this> {
-        this.publicKey = await PrivateEncryptionKey.generate(password, this.path).then(k => k.publicKey);
-        if (this.databaseOptions.passwordCanSign) this.verifyKey = await SignKey.generate(password, this.path).then(k => k.verifyKey);
+        [this.publicKey, this.verifyKey] = await Promise.all([PrivateEncryptionKey.generate(password, this.path).then(k => k.publicKey), this.databaseOptions.passwordCanSign ? SignKey.generate(password, this.path).then(k => k.verifyKey) : undefined]);
+        if (!this.databaseOptions.passwordCanSign) delete this.verifyKey;
 
         return this;
     }
