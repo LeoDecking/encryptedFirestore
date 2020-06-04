@@ -5,26 +5,31 @@ import { SecretKey, ObjectsCrypto, SignKey, PrivateEncryptionKey, ObjectsKeyType
 
 // TODO device signKey/secretKey
 export class KeyStore {
-    private keys: { [path: string]: { privateEncryptionKey?: { encryptedKey?: string, persistent: boolean, prompt: boolean, key?: Promise<PrivateEncryptionKey> }, signKey?: { encryptedKey?: string, persistent: boolean, prompt: boolean, key?: Promise<SignKey> } } };;
-    private passwordCheck: string;
+    private keys: { [path: string]: { privateEncryptionKey?: { encryptedKey?: string, persistent: boolean, prompt: boolean, key: Promise<PrivateEncryptionKey> | null }, signKey?: { encryptedKey?: string, persistent: boolean, prompt: boolean, key: Promise<SignKey> | null } } };;
+    private passwordCheck?: string;
     private getStoragePassword: (passwordCheck: string) => Promise<string>;
 
+    // TODO wrong password
     constructor(json: string, getStoragePassword: (passwordCheck: string) => Promise<string>, out?: { keyContainer?: KeyContainer }) {
-        let stored = JSON.parse(json);
+        let stored = JSON.parse(json ?? "{}");
 
-        this.keys = stored.keys;
+        this.keys = stored.keys ?? {};
         this.passwordCheck = stored.passwordCheck;
         this.getStoragePassword = getStoragePassword;
 
-        let storagePasswordPromise = this.getStoragePassword(this.passwordCheck);
+        if (Object.keys(this.keys).length) {
+            if (!this.passwordCheck) throw new Error("no passwordCheck");
 
-        let generateStorageKey = storagePasswordPromise.then(storagePassword => SecretKey.generate(storagePassword, "withoutPrompt"));
+            let storagePasswordPromise = this.getStoragePassword(this.passwordCheck);
 
-        Object.values(this.keys).forEach(k => {
-            if (k.privateEncryptionKey) (k.privateEncryptionKey!.prompt) ? Promise.reject() : k.privateEncryptionKey.key = generateStorageKey.then(async storageKey => await PrivateEncryptionKey.import(await ObjectsCrypto.decrypt(k.privateEncryptionKey!.encryptedKey!, storageKey)));
-            if (k.signKey) (k.signKey!.prompt) ? Promise.reject() : k.signKey.key = generateStorageKey.then(async storageKey => await SignKey.import(await ObjectsCrypto.decrypt(k.signKey!.encryptedKey!, storageKey)));
-        });
-        if (out) out.keyContainer = this.createKeyContainer(storagePasswordPromise);
+            let generateStorageKey = storagePasswordPromise.then(storagePassword => SecretKey.generate(storagePassword, "withoutPrompt"));
+
+            Object.values(this.keys).forEach(k => {
+                if (k.privateEncryptionKey) k.privateEncryptionKey.key = (k.privateEncryptionKey!.prompt) ? null : generateStorageKey.then(async storageKey => await PrivateEncryptionKey.import(await ObjectsCrypto.decrypt(k.privateEncryptionKey!.encryptedKey!, storageKey)));
+                if (k.signKey) k.signKey.key = (k.signKey!.prompt) ? null : generateStorageKey.then(async storageKey => await SignKey.import(await ObjectsCrypto.decrypt(k.signKey!.encryptedKey!, storageKey)));
+            });
+            if (out) out.keyContainer = this.createKeyContainer(storagePasswordPromise);
+        }
     }
 
     async export(): Promise<string> {
@@ -32,35 +37,36 @@ export class KeyStore {
         Object.entries(this.keys).forEach(k => {
             if (k[1].privateEncryptionKey?.persistent || k[1].signKey?.persistent) {
                 persistentKeys[k[0]] = {};
-                if (k[1].privateEncryptionKey?.persistent) persistentKeys[k[0]].privateEncryptionKey = { ...k[1].privateEncryptionKey, key: undefined };
-                if (k[1].signKey?.persistent) persistentKeys[k[0]].signKey = { ...k[1].signKey, key: undefined };
+                if (k[1].privateEncryptionKey?.persistent) persistentKeys[k[0]].privateEncryptionKey = { ...k[1].privateEncryptionKey, key: null };
+                if (k[1].signKey?.persistent) persistentKeys[k[0]].signKey = { ...k[1].signKey, key: null };
             };
         });
         return JSON.stringify({ keys: persistentKeys, passwordCheck: this.passwordCheck });
     }
 
     async setStoragePassword(oldPassword: string, newPassword: string): Promise<void> {
-        let oldStorageKey = await SecretKey.generate(oldPassword, "withoutPrompt");
-        if (!await ObjectsCrypto.decrypt(this.passwordCheck, oldStorageKey).then(null, () => false)) throw new Error("wrong password");
+        let oldStorageKey = this.passwordCheck ? await SecretKey.generate(oldPassword, "withoutPrompt") : null;
+        if (this.passwordCheck && !await ObjectsCrypto.decrypt(this.passwordCheck, oldStorageKey!).then(null, () => false)) throw new Error("wrong password");
 
-        let [oldStoragePromptKey, newStorageKey, newStoragePromptKey] = await Promise.all([SecretKey.generate(oldPassword, "prompt"), SecretKey.generate(newPassword, "withoutPrompt"), SecretKey.generate(newPassword, "prompt")]);
+        let [oldStoragePromptKey, newStorageKey, newStoragePromptKey] = await Promise.all([this.passwordCheck ? SecretKey.generate(oldPassword, "prompt") : null, SecretKey.generate(newPassword, "withoutPrompt"), SecretKey.generate(newPassword, "prompt")]);
 
-        let values = Object.values(await this.keys);
 
         await Promise.all([
-            ...values.map(keys => Object.values(keys)).reduce((a, b) => [...a, ...b], []).map(async k => {
-                if (!k) return;
-                k.encryptedKey = await ObjectsCrypto.encrypt(await ObjectsCrypto.decrypt(k.encryptedKey, k.prompt ? oldStoragePromptKey : oldStorageKey), k.prompt ? newStoragePromptKey : newStorageKey);
-            }),
+            ...(this.passwordCheck ? Object.values(this.keys).map(keys => Object.values(keys)).reduce((a, b) => [...a, ...b], []).map(async k => {
+                if (!k?.encryptedKey) return;
+                k.encryptedKey = await ObjectsCrypto.encrypt(await ObjectsCrypto.decrypt(k.encryptedKey, k.prompt ? oldStoragePromptKey! : oldStorageKey!), k.prompt ? newStoragePromptKey : newStorageKey);
+            }) : []),
             ObjectsCrypto.encrypt(true, newStorageKey).then(c => this.passwordCheck = c) as Promise<void>
         ]);
     }
 
     createKeyContainer(storagePasswordPromise?: Promise<string>) {
+        if (!this.passwordCheck) throw new Error("no passwordCheck");
+
         let requestPromptKeys: () => void = () => { };
         let generateStorageKey: Promise<SecretKey> = storagePasswordPromise
             ? storagePasswordPromise.then(storagePassword => SecretKey.generate(storagePassword, "prompt"))
-            : new Promise(resolve => requestPromptKeys = () => this.getStoragePassword(this.passwordCheck).then(storagePassword => SecretKey.generate(storagePassword, "prompt")).then(storageKey => resolve(storageKey)));
+            : new Promise(resolve => requestPromptKeys = () => this.getStoragePassword(this.passwordCheck!).then(storagePassword => SecretKey.generate(storagePassword, "prompt")).then(storageKey => resolve(storageKey)));
 
         let keys: KeyContainer["keys"] = {};
 
@@ -69,7 +75,7 @@ export class KeyStore {
             if (k[1].privateEncryptionKey) {
                 keys[k[0]].privateEncryptionKey = {
                     key: (k[1].privateEncryptionKey.prompt)
-                        ? generateStorageKey.then(async storageKey => await PrivateEncryptionKey.import(await ObjectsCrypto.decrypt(k[1].privateEncryptionKey!.encryptedKey, storageKey)))
+                        ? generateStorageKey.then(async storageKey => await PrivateEncryptionKey.import(await ObjectsCrypto.decrypt(k[1].privateEncryptionKey!.encryptedKey!, storageKey)))
                         : k[1].privateEncryptionKey.key!,
                     prompt: k[1].privateEncryptionKey.prompt
                 };
@@ -77,7 +83,7 @@ export class KeyStore {
             if (k[1].signKey) {
                 keys[k[0]].signKey = {
                     key: (k[1].signKey.prompt)
-                        ? generateStorageKey.then(async storageKey => await SignKey.import(await ObjectsCrypto.decrypt(k[1].signKey!.encryptedKey, storageKey)))
+                        ? generateStorageKey.then(async storageKey => await SignKey.import(await ObjectsCrypto.decrypt(k[1].signKey!.encryptedKey!, storageKey)))
                         : k[1].signKey.key!,
                     prompt: k[1].signKey.prompt
                 };
@@ -98,8 +104,12 @@ export class KeyStore {
     // TODO canSign/canRead
     // TODO minimize / beautify
     async setPassword(path: string, password: string, privateEncryptionKeyOptions: StorageOptions = { store: "none" }, signKeyOptions: StorageOptions = { store: "none" }, keyContainer: KeyContainer = this.createKeyContainer()): Promise<KeyContainer> {
+        if (!this.passwordCheck) throw new Error("no passwordCheck");
+
         let storagePasswordPromise: Promise<string> | null = ((privateEncryptionKeyOptions.storageKeyPrompt || privateEncryptionKeyOptions.store == "persistent")
             || (signKeyOptions.storageKeyPrompt || signKeyOptions.store == "persistent")) ? this.getStoragePassword(this.passwordCheck) : null;
+        // TODO beides nicht angegeben??
+        // TODO wrong password
         let storageKeyPromise: Promise<SecretKey> | null = (privateEncryptionKeyOptions.storageKeyPrompt && signKeyOptions.storageKeyPrompt) ? null : storagePasswordPromise!.then(storagePassword => SecretKey.generate(storagePassword, "withoutPrompt"));
         let storageKeyPromptPromise: Promise<SecretKey> | null = (!privateEncryptionKeyOptions.storageKeyPrompt && !signKeyOptions.storageKeyPrompt) ? null : storagePasswordPromise!.then(storagePassword => SecretKey.generate(storagePassword, "prompt"));
 
@@ -126,7 +136,7 @@ export class KeyStore {
             if (!keys) keys = (this.keys[path] = {});
 
             keys[key.keyType] = {
-                key: (keys[key.keyType]?.prompt ? Promise.reject() : Promise.resolve(key)) as Promise<SignKey> & Promise<PrivateEncryptionKey>,
+                key: (storageOptions.storageKeyPrompt == "always" ? null : Promise.resolve(key)) as Promise<SignKey> & Promise<PrivateEncryptionKey>,
                 persistent: storageOptions.store == "persistent",
                 prompt: storageOptions.storageKeyPrompt == "always"
             };
@@ -136,6 +146,7 @@ export class KeyStore {
         return keyContainer;
     }
 
+    // TODO get promptKey without container parameter, 
     async getKey(path: string, keyType: ObjectsKeyType.PrivateEncryption | ObjectsKeyType.Sign, keyContainer?: KeyContainer): Promise<PrivateEncryptionKey | SignKey> {
         if (keyContainer) {
             return keyContainer.getKey(path, keyType);
@@ -146,6 +157,7 @@ export class KeyStore {
         }
     }
 
+    // TODO storagePassword needed?
     async deletePassword(path: string, keyContainer?: KeyContainer) {
         delete this.keys[path];
         if (keyContainer) {
