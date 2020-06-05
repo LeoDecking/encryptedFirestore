@@ -101,6 +101,7 @@ export class KeyStore {
         return keyContainer ? keyContainer.hasKey(path, keyType) : !!this.keys[path]?.[keyType];
     }
 
+    // TODO why storagePassword?
     // TODO canSign/canRead
     // TODO minimize / beautify
     async setPassword(path: string, password: string, privateEncryptionKeyOptions: StorageOptions = { store: "none" }, signKeyOptions: StorageOptions = { store: "none" }, keyContainer: KeyContainer = this.createKeyContainer()): Promise<KeyContainer> {
@@ -116,12 +117,12 @@ export class KeyStore {
         await Promise.all([
             privateEncryptionKeyOptions.store == "none" ? undefined : PrivateEncryptionKey.generateBits(password, path + ObjectsKeyType.PrivateEncryption).then(bits => Promise.all([
                 PrivateEncryptionKey.import(bits),
-                privateEncryptionKeyOptions.storageKeyPrompt || privateEncryptionKeyOptions.store == "persistent" ? (privateEncryptionKeyOptions.storageKeyPrompt ? storageKeyPromptPromise : storageKeyPromise)?.then(secretKey => ObjectsCrypto.encrypt(bits, secretKey)) : undefined
+                privateEncryptionKeyOptions.storageKeyPrompt || privateEncryptionKeyOptions.store == "persistent" ? (privateEncryptionKeyOptions.storageKeyPrompt ? storageKeyPromptPromise : storageKeyPromise)?.then(secretKey => ObjectsCrypto.encrypt(Array.from(bits), secretKey)) : undefined
             ] as [Promise<PrivateEncryptionKey>, Promise<string> | undefined])).then(p => this.setKey(path, p[0], p[1], privateEncryptionKeyOptions, keyContainer)),
 
             signKeyOptions.store == "none" ? undefined : SignKey.generateBits(password, path + ObjectsKeyType.Sign).then(bits => Promise.all([
                 SignKey.import(bits),
-                signKeyOptions.storageKeyPrompt || signKeyOptions.store == "persistent" ? (signKeyOptions.storageKeyPrompt ? storageKeyPromptPromise : storageKeyPromise)?.then(secretKey => ObjectsCrypto.encrypt(bits, secretKey)) : undefined
+                signKeyOptions.storageKeyPrompt || signKeyOptions.store == "persistent" ? (signKeyOptions.storageKeyPrompt ? storageKeyPromptPromise : storageKeyPromise)?.then(secretKey => ObjectsCrypto.encrypt(Array.from(bits), secretKey)) : undefined
             ] as [Promise<SignKey>, Promise<string> | undefined])).then(p => this.setKey(path, p[0], p[1], signKeyOptions, keyContainer))
         ] as Promise<KeyContainer>[]);
         return keyContainer;
@@ -148,6 +149,7 @@ export class KeyStore {
 
     // TODO get promptKey without container parameter, 
     async getKey(path: string, keyType: ObjectsKeyType.PrivateEncryption | ObjectsKeyType.Sign, keyContainer?: KeyContainer): Promise<PrivateEncryptionKey | SignKey> {
+        if (!keyContainer && this.keys[path]?.[keyType]?.prompt) keyContainer = this.createKeyContainer();
         if (keyContainer) {
             return keyContainer.getKey(path, keyType);
         } else {
