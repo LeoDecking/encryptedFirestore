@@ -26,7 +26,6 @@ type DocumentData = {
 // Every property must be default initialized!
 export abstract class DatabaseObject<Tstring extends string, T extends DatabaseObjectType, P extends DatabaseObjectType | App, ParentIsOwner extends boolean = true> {
     private _type?: Tstring;
-    // TODO canEncrypt??
     abstract readonly databaseOptions: {
         collection: string,
 
@@ -74,7 +73,6 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         return await ObjectsCrypto.hash(object);
     }
 
-    // TODO keycontainer as parameter in every method!!
     // TODO id from path
     static async fromDocumentData<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], documentData: DocumentData, id: string = AutoId.newId(), opaque: boolean = false, keyContainer?: KeyContainer): Promise<T> {
         if (!documentData.signature) throw new Error("no signature");
@@ -302,8 +300,6 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
 
 
-
-    // TODO keycontainer
 
     // TODO ids from firestore (more than 10)
     // TODO allEncryptedFor / allSignedBy from firestore
