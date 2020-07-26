@@ -1,10 +1,9 @@
 import { AutoId } from "./AutoId";
-import { DatabaseObjectType, GetOwner, DatabaseChildObjectType } from "./DatabaseObjectType";
+import { DatabaseObjectType, DatabaseChildObjectType, DatabaseAncestorObjectType } from "./DatabaseObjectType";
 import { App } from "./App";
 import { KeyContainer } from "./KeyStore";
 import { PublicEncryptionKey, VerifyKey, ObjectsCrypto, PrivateEncryptionKey, SignKey, SecretKey, ObjectsKeyType } from "objects-crypto";
-import { app } from "firebase";
-import { PublicKey } from "objects-crypto/dist/Key/Keys";
+// import { app } from "firebase";
 
 
 type DocumentData = {
@@ -24,15 +23,16 @@ type DocumentData = {
 };
 
 // Every property must be default initialized!
-export abstract class DatabaseObject<Tstring extends string, T extends DatabaseObjectType, P extends DatabaseObjectType | App, ParentIsOwner extends boolean = true> {
-    private _type?: Tstring;
+export abstract class DatabaseObject<Tstring extends string, T extends DatabaseObjectType, P extends DatabaseObjectType | App, O extends DatabaseAncestorObjectType<T> = P> {
     abstract readonly databaseOptions: {
+        type: Tstring,
         collection: string,
 
-        parentIsOwner: ParentIsOwner, // --> is the direct parent the owner? / can it write?
+        ownerType: O extends App ? "app" : Extract<O, DatabaseObjectType>["databaseOptions"]["type"],
         ownerMayRead: boolean, // --> should the secretKey be encrypted for owner?
         ownerMayWrite: boolean, // --> is the owner allowed to sign children of this object?
 
+        // TODO weiter implementieren / löschen
         hasPassword: boolean, // --> should a password for encryption be generated?
         passwordCanSign: boolean,
 
@@ -43,7 +43,12 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
     readonly app: App;
     readonly parent: P;
-    get owner(): GetOwner<T> { return (App.isApp(this.parent) || this.databaseOptions.parentIsOwner ? this.parent : (this.parent as DatabaseObjectType).owner) as GetOwner<T>; }
+    get owner(): O {
+        for (let o: DatabaseObjectType | App = this.parent; !App.isApp(o); o = o.parent) {
+            if (o.databaseOptions.type == this.databaseOptions.ownerType) return o as O;
+        }
+        return this.app as O;
+    }
 
     readonly id: string;
     get path(): string { return this.parent.path + "/" + this.databaseOptions.collection + "/" + this.id; }
@@ -293,6 +298,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     }
     async setPassword(password: string): Promise<this> {
         [this.publicKey, this.verifyKey] = await Promise.all([PrivateEncryptionKey.generate(password, this.path).then(k => k.publicKey), this.databaseOptions.passwordCanSign ? SignKey.generate(password, this.path).then(k => k.verifyKey) : undefined]);
+        // TODO ist das nötig, bzw. vlt. schon so undefined?
         if (!this.databaseOptions.passwordCanSign) delete this.verifyKey;
 
         return this;
