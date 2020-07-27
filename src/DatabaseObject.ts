@@ -22,6 +22,7 @@ type DocumentData = {
     }
 };
 
+// TODO after download / before upload
 // Every property must be default initialized!
 export abstract class DatabaseObject<Tstring extends string, T extends DatabaseObjectType, P extends DatabaseObjectType | App, O extends DatabaseAncestorObjectType<T> = P> {
     abstract readonly databaseOptions: {
@@ -39,7 +40,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         encryptedProperties?: string[]
 
     };
-    private readonly ignoreProperties = ["databaseOptions", "ignoreProperties", "id", "app", "parent", "verifyKey"];
+    private readonly ignoreProperties = ["databaseOptions", "ignoreProperties", "id", "app", "parent", "verifyKey", "publicKey"];
 
     readonly app: App;
     readonly parent: P;
@@ -56,7 +57,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
     publicKey?: PublicEncryptionKey;
     verifyKey?: VerifyKey;
-    publicKeys?: { [path: string]: PublicEncryptionKey }; // keys, for which the secretKey will be encrypted - without allowed parents, there added automatically
+    publicKeys?: { [path: string]: PublicEncryptionKey }; // keys, for which the secretKey will be encrypted - without allowed parents, they're added automatically
 
 
     constructor(parent: P, id: string = AutoId.newId()) {
@@ -87,11 +88,11 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
 
         let owner: DatabaseObjectType | App;
-        for (let o: DatabaseObjectType = object; !App.isApp(o) && o.databaseOptions.ownerMayWrite; o = o.owner as DatabaseObjectType) {
+        for (let o: DatabaseObjectType = object; !owner! && !App.isApp(o); o = o.owner as DatabaseObjectType) {
             if (o.owner.path == documentData.signature.ownerPath) {
-                if (o.owner.verifyKey && await o.owner.verifyKey?.export == documentData.signature.verifyKey) owner = o;
+                if (o.owner.verifyKey && await o.owner.verifyKey?.export == documentData.signature.verifyKey) owner = o.owner;
                 else throw new Error("wrong verifyKey");
-            }
+            } else if (!o.databaseOptions.ownerMayWrite) break;
         }
         if (!owner!) throw new Error("wrong signature's owner");
 
@@ -159,11 +160,17 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     clone(constructor: new (parent: P, id?: string) => T): T {
         let object = new constructor(this.parent, this.id) as T;
         Object.keys(object).forEach(k => (object as { [key: string]: any })[k] = (this.ignoreProperties.indexOf(k) == -1) ? ObjectsCrypto.sortObject((this as { [key: string]: any })[k]) : (this as { [key: string]: any })[k]);
+        if (this.verifyKey) object.verifyKey = this.verifyKey;
+        if (this.publicKey) object.publicKey = this.publicKey;
+        if (this.publicKeys) object.publicKeys = this.publicKeys;
         return object;
     }
 
     cloneFrom(object: this): this {
         Object.keys(this).forEach(k => (this as { [key: string]: any })[k] = (this.ignoreProperties.indexOf(k) == -1) ? ObjectsCrypto.sortObject((object as { [key: string]: any })[k]) : (object as { [key: string]: any })[k]);
+        if (object.verifyKey) this.verifyKey = object.verifyKey;
+        if (object.publicKey) this.publicKey = object.publicKey;
+        if (object.publicKeys) this.publicKeys = object.publicKeys;
         return this;
     }
 
@@ -187,7 +194,6 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
                 );
 
                 let secretKey = await SecretKey.generate();
-
 
                 let privateEncryptionKey = await PrivateEncryptionKey.generate();
 
@@ -220,11 +226,11 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
             let signKey: SignKey;
             let ownerPath: string;
-            for (let o: DatabaseObjectType = object; !App.isApp(o) && o.databaseOptions.ownerMayWrite; o = o.owner as DatabaseObjectType) {
+            for (let o: DatabaseObjectType = object; !signKey! && !App.isApp(o); o = o.owner as DatabaseObjectType) {
                 if (object.app.keyStore.hasKey(o.owner.path, ObjectsKeyType.Sign, keyContainer)) {
                     signKey = await object.app.keyStore.getKey(o.owner.path, ObjectsKeyType.Sign) as SignKey;
                     ownerPath = o.owner.path;
-                }
+                } else if (!App.isApp(o.owner) && !o.owner.databaseOptions.ownerMayWrite) break;
             }
 
             // TODO deviceSignKey
@@ -260,11 +266,11 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
             let signKey: SignKey;
             let ownerPath: string;
-            for (let o: DatabaseObjectType = object; !App.isApp(o) && o.databaseOptions.ownerMayWrite; o = o.owner as DatabaseObjectType) {
+            for (let o: DatabaseObjectType = object; !signKey! && !App.isApp(o); o = o.owner as DatabaseObjectType) {
                 if (object.app.keyStore.hasKey(o.owner.path, ObjectsKeyType.Sign, keyContainer)) {
                     signKey = await object.app.keyStore.getKey(o.owner.path, ObjectsKeyType.Sign) as SignKey;
                     ownerPath = o.owner.path;
-                }
+                } else if (!App.isApp(o.owner) && !o.owner.databaseOptions.ownerMayWrite) break;
             }
 
             if (!signKey!) throw new Error("no signKey");
@@ -282,6 +288,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     }
 
 
+    // TODO überprüfen, ob richtiger path
     async getOpaquePassword(password: string): Promise<string> {
         let opaque: { publicKey?: string, verifyKey?: string } = {};
         [opaque.publicKey, opaque.verifyKey] = await Promise.all([PrivateEncryptionKey.generate(password, this.path).then(k => k.publicKey.export), this.databaseOptions.passwordCanSign ? SignKey.generate(password, this.path).then(k => k.verifyKey.export) : undefined]);
@@ -292,6 +299,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     async setOpaquePasswort(opaque: string): Promise<this> {
         let o = JSON.parse(atob(opaque));
         [this.publicKey, this.verifyKey] = await Promise.all([PublicEncryptionKey.import(o["keyHash"]), o["verifyKey"] ? await VerifyKey.import(o["verifyKey"]) : undefined]);
+        // TODO delete nötig?
         if (!this.databaseOptions.passwordCanSign) delete this.verifyKey;
 
         return this;
@@ -354,6 +362,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         return DatabaseObject.fromFirestore.call(child as any, this, id, opaque, onSnapshot, keyContainer);
     }
 
+    // TODO ? query
     childrenFromFirestore<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[], opaque?: boolean, onSnapshot?: null, keyContainer?: KeyContainer): Promise<C[]>;
     childrenFromFirestore<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[], opaque: boolean, onSnapshot: (objects: C[]) => void): () => void;
     childrenFromFirestore<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[] = [], opaque: boolean = false, onSnapshot?: ((objects: C[]) => void) | null, keyContainer?: KeyContainer): Promise<C[]> | (() => void) {
