@@ -3,6 +3,7 @@ import { DatabaseObjectType, DatabaseChildObjectType, DatabaseAncestorObjectType
 import { App } from "./App";
 import { KeyContainer } from "./KeyStore";
 import { PublicEncryptionKey, VerifyKey, ObjectsCrypto, PrivateEncryptionKey, SignKey, SecretKey, ObjectsKeyType } from "objects-crypto";
+import { Key } from "objects-crypto/dist/Key/Key";
 // import { app } from "firebase";
 
 
@@ -40,7 +41,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         encryptedProperties?: string[]
 
     };
-    private readonly ignoreProperties = ["databaseOptions", "ignoreProperties", "id", "app", "parent", "verifyKey", "publicKey"];
+    private readonly ignoreProperties = ["databaseOptions", "ignoreProperties", "id", "app", "parent", "verifyKey", "publicKey", "children"];
 
     readonly app: App;
     readonly parent: P;
@@ -54,6 +55,8 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     readonly id: string;
     get path(): string { return this.parent.path + "/" + this.databaseOptions.collection + "/" + this.id; }
     version: number = 0;
+
+    children?: { [type: string]: { [id: string]: DatabaseChildObjectType<T> } };
 
     publicKey?: PublicEncryptionKey;
     verifyKey?: VerifyKey;
@@ -156,18 +159,17 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         return this;
     }
 
-    // TODO without constructor
-    clone(constructor: new (parent: P, id?: string) => T): T {
-        let object = new constructor(this.parent, this.id) as T;
-        Object.keys(object).forEach(k => (object as { [key: string]: any })[k] = (this.ignoreProperties.indexOf(k) == -1) ? ObjectsCrypto.sortObject((this as { [key: string]: any })[k]) : (this as { [key: string]: any })[k]);
-        if (this.verifyKey) object.verifyKey = this.verifyKey;
-        if (this.publicKey) object.publicKey = this.publicKey;
-        if (this.publicKeys) object.publicKeys = this.publicKeys;
-        return object;
+    // TODO test
+    clone(): this {
+        return new (this.constructor as new (parent: P, id?: string) => this)(this.parent, this.id).cloneFrom(this);
     }
 
     cloneFrom(object: this): this {
         Object.keys(this).forEach(k => (this as { [key: string]: any })[k] = (this.ignoreProperties.indexOf(k) == -1) ? ObjectsCrypto.sortObject((object as { [key: string]: any })[k]) : (object as { [key: string]: any })[k]);
+        if (object.children) {
+            this.children = {};
+            Object.keys(object.children).forEach(ct => { this.children![ct] = {}; Object.keys(object.children![ct]).forEach(c => this.children![ct]![c] = object.children![ct]![c]!.clone()); });
+        }
         if (object.verifyKey) this.verifyKey = object.verifyKey;
         if (object.publicKey) this.publicKey = object.publicKey;
         if (object.publicKeys) this.publicKeys = object.publicKeys;
@@ -369,6 +371,19 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         return DatabaseObject.collectionFromFirestore.call(child as any, this, queries, opaque, onSnapshot, keyContainer);
     }
 
+    // TODO not firestore, newChild?
+    loadChildrenFromFirestore<C extends (new (parent: this, id?: string) => DatabaseChildObjectType<this>)[]>(children: C, opaque?: boolean, keyContainer?: KeyContainer): Promise<this> {
+        return Promise.all(children.map(c => this.childrenFromFirestore(c, [], opaque, undefined, keyContainer))).then(c => {
+            this.children = {};
+            c.forEach((c1, i) => {
+                let collection: { [id: string]: DatabaseChildObjectType<any> } = {};
+                c1.forEach(c2 => collection[c2.id] = c2);
+                this.children![new children[i](this).databaseOptions.collection] = collection;
+            });
+            return this;
+        });
+    }
+
     async updateFromFirestore(constructor: new (parent: P, id?: string) => T, opaque: boolean = false, keyContainer?: KeyContainer): Promise<this> {
         let updated = await DatabaseObject.fromFirestore.call(constructor, this.parent, this.id, opaque, keyContainer);
         Object.keys(this).forEach(k => (this as { [key: string]: any })[k] = updated[k]);
@@ -378,6 +393,10 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
     static async uploadToFirestore(objects: DatabaseObjectType[], keyContainer?: KeyContainer): Promise<void> {
         console.log("toFirestore", objects);
+        if(objects.length==0) return;
+        
+        // TODO
+        // keyContainer = objects[0].app.keyStore.createKeyContainer();
 
         let result = await objects[0].app.firebase.functions("europe-west3").httpsCallable("setDocuments")(JSON.stringify(await DatabaseObject.toDocumentData(objects, true, keyContainer)));
         if (result.data !== true) throw new Error("unkown error");
