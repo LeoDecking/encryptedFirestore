@@ -40,9 +40,9 @@ export class App {
         return DatabaseObject.fromFirestore.call(child as any, this, id, onSnapshot);
     }
 
-    childrenFromFirestore<C extends DatabaseChildObjectType<App>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[]): Promise<C[]>;
-    childrenFromFirestore<C extends DatabaseChildObjectType<App>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[], onSnapshot: (objects: C[]) => void): () => void;
-    childrenFromFirestore<C extends DatabaseChildObjectType<App>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[] = [], onSnapshot?: (objects: C[]) => void): Promise<C[]> | (() => void) {
+    childrenFromFirestore<C extends DatabaseChildObjectType<App>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[] | string[]): Promise<C[]>;
+    childrenFromFirestore<C extends DatabaseChildObjectType<App>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[] | string[], onSnapshot: (objects: C[]) => void): () => void;
+    childrenFromFirestore<C extends DatabaseChildObjectType<App>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[] | string[] = [], onSnapshot?: (objects: C[]) => void): Promise<C[]> | (() => void) {
         return DatabaseObject.collectionFromFirestore.call(child as any, this, queries, onSnapshot);
     }
 }

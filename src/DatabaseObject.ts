@@ -41,7 +41,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         encryptedProperties?: string[]
 
     };
-    private readonly ignoreProperties = ["databaseOptions", "ignoreProperties", "id", "app", "parent", "verifyKey", "publicKey", "children"];
+    private readonly ignoreProperties = ["databaseOptions", "ignoreProperties", "id", "app", "parent", "verifyKey", "publicKey", "publicKeys", , "children"];
 
     readonly app: App;
     readonly parent: P;
@@ -80,6 +80,16 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
                 object[k] = (this as { [key: string]: any })[k];
         });
         return await ObjectsCrypto.hash(object);
+    }
+
+    equals(object: this): boolean {
+        if (Object.keys(this)
+            .filter(k => this.ignoreProperties.indexOf(k) == -1)
+            .some(k => JSON.stringify(ObjectsCrypto.sortObject((this as { [key: string]: any })[k])) != JSON.stringify(ObjectsCrypto.sortObject((object as { [key: string]: any })[k]))))
+            return false;
+        if (this.publicKey?.sExport != object.publicKey?.sExport) return false;
+        if (this.verifyKey?.sExport != object.verifyKey?.sExport) return false;
+        return true;
     }
 
     // TODO id from path
@@ -230,7 +240,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
             let ownerPath: string;
             for (let o: DatabaseObjectType = object; !signKey! && !App.isApp(o); o = o.owner as DatabaseObjectType) {
                 if (object.app.keyStore.hasKey(o.owner.path, ObjectsKeyType.Sign, keyContainer)) {
-                    signKey = await object.app.keyStore.getKey(o.owner.path, ObjectsKeyType.Sign) as SignKey;
+                    signKey = await object.app.keyStore.getKey(o.owner.path, ObjectsKeyType.Sign, keyContainer) as SignKey;
                     ownerPath = o.owner.path;
                 } else if (!App.isApp(o.owner) && !o.owner.databaseOptions.ownerMayWrite) break;
             }
@@ -270,7 +280,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
             let ownerPath: string;
             for (let o: DatabaseObjectType = object; !signKey! && !App.isApp(o); o = o.owner as DatabaseObjectType) {
                 if (object.app.keyStore.hasKey(o.owner.path, ObjectsKeyType.Sign, keyContainer)) {
-                    signKey = await object.app.keyStore.getKey(o.owner.path, ObjectsKeyType.Sign) as SignKey;
+                    signKey = await object.app.keyStore.getKey(o.owner.path, ObjectsKeyType.Sign, keyContainer) as SignKey;
                     ownerPath = o.owner.path;
                 } else if (!App.isApp(o.owner) && !o.owner.databaseOptions.ownerMayWrite) break;
             }
@@ -304,13 +314,17 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         // TODO delete nötig?
         if (!this.databaseOptions.passwordCanSign) delete this.verifyKey;
 
+        await this.publicKey?.export;
+        await this.verifyKey?.export;
+
         return this;
     }
     async setPassword(password: string): Promise<this> {
         [this.publicKey, this.verifyKey] = await Promise.all([PrivateEncryptionKey.generate(password, this.path).then(k => k.publicKey), this.databaseOptions.passwordCanSign ? SignKey.generate(password, this.path).then(k => k.verifyKey) : undefined]);
         // TODO ist das nötig, bzw. vlt. schon so undefined?
         if (!this.databaseOptions.passwordCanSign) delete this.verifyKey;
-
+        await this.publicKey?.export;
+        await this.verifyKey?.export;
         return this;
     }
 
@@ -323,30 +337,52 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     static fromFirestore<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], id: string, opaque?: boolean, onSnapshot?: null, keyContainer?: KeyContainer): Promise<T>;
     static fromFirestore<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], id: string, opaque: boolean, onSnapshot: (object: T) => void, keyContainer?: KeyContainer): () => void;
     static fromFirestore<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], id: string, opaque: boolean = false, onSnapshot?: ((object: T) => void) | null, keyContainer?: KeyContainer): Promise<T> | (() => void) {
-        let dummy = new this(parent, id);
         if (!onSnapshot) {
             return new Promise(async (resolve, reject) => {
-                let documents = await DatabaseObject.collectionFromFirestore.call(this, parent, [{ fieldPath: "path", opStr: "==", value: dummy.path }], opaque, keyContainer);
+                let documents = await DatabaseObject.collectionFromFirestore.call(this, parent, [id], opaque, keyContainer);
                 if (documents.length != 1) reject("document not found");
                 else resolve(documents[0] as T);
             });
         } else {
-            return DatabaseObject.collectionFromFirestore.call(this, parent, [{ fieldPath: "path", opStr: "==", value: dummy.path }], opaque, ((objects: T[]) => onSnapshot(objects[0])));
+            return DatabaseObject.collectionFromFirestore.call(this, parent, [id], opaque, ((objects: T[]) => onSnapshot(objects[0])));
         }
     }
 
+    // TODO test!!
     // TODO changes?
-    static collectionFromFirestore<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[], opaque?: boolean, onSnapshot?: null, keyContainer?: KeyContainer): Promise<T[]>;
-    static collectionFromFirestore<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[], opaque: boolean, onSnapshot: (objects: T[]) => void): (() => void);
-    static collectionFromFirestore<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[] = [], opaque: boolean = false, onSnapshot?: ((objects: T[]) => void) | null, keyContainer?: KeyContainer): Promise<T[]> | (() => void) {
+    static collectionFromFirestore<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[] | string[], opaque?: boolean, onSnapshot?: null, keyContainer?: KeyContainer): Promise<T[]>;
+    static collectionFromFirestore<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[] | string[], opaque: boolean, onSnapshot: (objects: T[]) => void): (() => void);
+    static collectionFromFirestore<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[] | string[] = [], opaque: boolean = false, onSnapshot?: ((objects: T[]) => void) | null, keyContainer?: KeyContainer): Promise<T[]> | (() => void) {
         let dummy = new this(parent);
 
         let query: firebase.firestore.CollectionReference<firebase.firestore.DocumentData> | firebase.firestore.Query<firebase.firestore.DocumentData>
             = dummy.app.firebase.firestore().collection(parent.path + "/" + dummy.databaseOptions.collection);
-        queries.forEach(q => query = query.where(q.fieldPath, q.opStr, q.value));
+        if (queries.length && typeof queries[0] == "string") {
+            let paths: string[][] = [];
+            for (let i = 0; i < queries.length; i++) {
+                if (!paths[Math.floor(i / 10)]) paths[Math.floor(i / 10)] = [];
+                paths[Math.floor(i / 10)][i % 10] = new this(parent, (queries as string[])[i]).path;
+            }
 
-        if (!onSnapshot)
+            if (!onSnapshot) {
+                if (!keyContainer) keyContainer = dummy.app.keyStore.createKeyContainer();
+                return Promise.all(paths.map(p => DatabaseObject.collectionFromFirestore.call(this, parent, [{ fieldPath: "path", opStr: "in", value: p }], opaque, null, keyContainer))).then(o => o.reduce((a, b) => [...a, ...b]));
+            } else {
+                let snapshotFired: boolean[] = new Array(paths.length);
+                let objects = new Array(queries.length);
+                let stops = paths.map((p, i) => DatabaseObject.collectionFromFirestore.call(this, parent, [{ fieldPath: "path", opStr: "in", value: p }], opaque, (os: T[]) => {
+                    os.forEach(o => objects[(queries as string[]).findIndex(id => id == o.id)] = o);
+                    snapshotFired[i] = true;
+                    if (snapshotFired.every(p1 => p1)) onSnapshot(objects);
+                }));
+                return () => stops.forEach(s => s());
+            }
+        } else (queries as { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[]).forEach(q => query = query.where(q.fieldPath, q.opStr, q.value));
+
+        if (!onSnapshot) {
+            if (!keyContainer) keyContainer = dummy.app.keyStore.createKeyContainer();
             return query.get({ source: "server" }).then(s => Promise.all(s.docs.map(d => DatabaseObject.fromDocumentData.call(this, parent, d.data(), d.id, opaque, keyContainer) as Promise<T>)));
+        }
         else
             return query.onSnapshot(async s => {
                 // type: : (objs: { obj: T, change?: firebase.firestore.DocumentChange<firebase.firestore.DocumentData> }[] => void
@@ -354,7 +390,8 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
                 // console.log(changes);
                 // console.log(s.docs);
                 // onSnapshot((await Promise.all(s.docs.map(d => DatabaseObject.getObjectFromDocument.call(this, parent, d)))).map(o => ({ obj: o as T, change: changes.find(c => c.doc.id == o.id) })));
-                onSnapshot(await Promise.all(s.docs.map(d => DatabaseObject.fromDocumentData.call(this, parent, d.data(), d.id, opaque, keyContainer))) as T[]);
+                let sKeyContainer = dummy.app.keyStore.createKeyContainer();
+                onSnapshot(await Promise.all(s.docs.map(d => DatabaseObject.fromDocumentData.call(this, parent, d.data(), d.id, opaque, sKeyContainer))) as T[]);
             }) as (() => void);
     }
 
@@ -365,16 +402,17 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     }
 
     // TODO ? query
-    childrenFromFirestore<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[], opaque?: boolean, onSnapshot?: null, keyContainer?: KeyContainer): Promise<C[]>;
-    childrenFromFirestore<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[], opaque: boolean, onSnapshot: (objects: C[]) => void): () => void;
-    childrenFromFirestore<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[] = [], opaque: boolean = false, onSnapshot?: ((objects: C[]) => void) | null, keyContainer?: KeyContainer): Promise<C[]> | (() => void) {
+    childrenFromFirestore<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[] | string[], opaque?: boolean, onSnapshot?: null, keyContainer?: KeyContainer): Promise<C[]>;
+    childrenFromFirestore<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[] | string[], opaque: boolean, onSnapshot: (objects: C[]) => void): () => void;
+    childrenFromFirestore<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[] | string[] = [], opaque: boolean = false, onSnapshot?: ((objects: C[]) => void) | null, keyContainer?: KeyContainer): Promise<C[]> | (() => void) {
         return DatabaseObject.collectionFromFirestore.call(child as any, this, queries, opaque, onSnapshot, keyContainer);
     }
 
     // TODO not firestore, newChild?
+    // TODO updateChildren
     loadChildrenFromFirestore<C extends (new (parent: this, id?: string) => DatabaseChildObjectType<this>)[]>(children: C, opaque?: boolean, keyContainer?: KeyContainer): Promise<this> {
         return Promise.all(children.map(c => this.childrenFromFirestore(c, [], opaque, undefined, keyContainer))).then(c => {
-            this.children = {};
+            if (!this.children) this.children = {};
             c.forEach((c1, i) => {
                 let collection: { [id: string]: DatabaseChildObjectType<any> } = {};
                 c1.forEach(c2 => collection[c2.id] = c2);
@@ -393,10 +431,9 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
     static async uploadToFirestore(objects: DatabaseObjectType[], keyContainer?: KeyContainer): Promise<void> {
         console.log("toFirestore", objects);
-        if(objects.length==0) return;
-        
-        // TODO
-        // keyContainer = objects[0].app.keyStore.createKeyContainer();
+        if (objects.length == 0) return;
+
+        if (!keyContainer) keyContainer = objects[0].app.keyStore.createKeyContainer();
 
         let result = await objects[0].app.firebase.functions("europe-west3").httpsCallable("setDocuments")(JSON.stringify(await DatabaseObject.toDocumentData(objects, true, keyContainer)));
         if (result.data !== true) throw new Error("unkown error");
