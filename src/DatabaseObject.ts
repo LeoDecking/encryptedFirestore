@@ -85,7 +85,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     equals(object: this): boolean {
         if (Object.keys(this)
             .filter(k => this.ignoreProperties.indexOf(k) == -1)
-            .some(k => JSON.stringify(ObjectsCrypto.sortObject((this as { [key: string]: any })[k])) != JSON.stringify(ObjectsCrypto.sortObject((object as { [key: string]: any })[k]))))
+            .some(k => !ObjectsCrypto.equals((this as { [key: string]: any })[k], (object as { [key: string]: any })[k])))
             return false;
         if (this.publicKey?.sExport != object.publicKey?.sExport) return false;
         if (this.verifyKey?.sExport != object.verifyKey?.sExport) return false;
@@ -261,6 +261,13 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     }
     async toDocumentData(incrementVersion = false, keyContainer?: KeyContainer): Promise<{ [key: string]: any }> {
         return (await DatabaseObject.toDocumentData([this], incrementVersion, keyContainer))[0];
+    }
+
+    getDeleteDatabaseObject(): this {
+        let object = this.clone();
+        object.version *= -1;
+        object.version--;
+        return object;
     }
 
     static async deleteDocumentData(objects: DatabaseObjectType[], keyContainer?: KeyContainer): Promise<DocumentData[]> {
