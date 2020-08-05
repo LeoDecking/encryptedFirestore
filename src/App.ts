@@ -19,7 +19,7 @@ export class App {
 
     // TODO deviceVerify/publicKey
     // TODO keyStore any??
-    constructor(firebaseApp: firebase.app.App, keyStore: any, verifyKey: VerifyKey, publicKey: PublicEncryptionKey) {
+    constructor(firebaseApp: firebase.app.App, keyStore: KeyStore, verifyKey: VerifyKey, publicKey: PublicEncryptionKey) {
         this.firebase = firebaseApp;
         this.keyStore = keyStore;
         this.verifyKey = verifyKey;

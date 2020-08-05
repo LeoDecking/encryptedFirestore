@@ -93,26 +93,34 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     }
 
     // TODO id from path
-    static async fromDocumentData<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], documentData: DocumentData, id: string = AutoId.newId(), opaque: boolean = false, keyContainer?: KeyContainer): Promise<T> {
+    static async fromDocumentData<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], documentData: DocumentData, id: string = AutoId.newId(), mode: "default" | "opaque" | "device" = "default", keyContainer?: KeyContainer): Promise<T> {
         if (!documentData.signature) throw new Error("no signature");
 
         let object = new this(parent, id);
         if (documentData.path != object.path) throw new Error("wrong path: " + object.path);
 
-
-        let owner: DatabaseObjectType | App;
-        for (let o: DatabaseObjectType = object; !owner! && !App.isApp(o); o = o.owner as DatabaseObjectType) {
-            if (o.owner.path == documentData.signature.ownerPath) {
-                if (o.owner.verifyKey && await o.owner.verifyKey?.export == documentData.signature.verifyKey) owner = o.owner;
-                else throw new Error("wrong verifyKey");
-            } else if (!o.databaseOptions.ownerMayWrite) break;
+        let verifyKey: VerifyKey;
+        if (mode == "device") {
+            if (object.app.keyStore.hasKey("device", ObjectsKeyType.Sign))
+                verifyKey = (await object.app.keyStore.getKey("device", ObjectsKeyType.Sign) as SignKey).verifyKey;
+            else throw new Error("no device key stored");
         }
-        if (!owner!) throw new Error("wrong signature's owner");
+        else {
+            let owner: DatabaseObjectType | App;
+            for (let o: DatabaseObjectType = object; !owner! && !App.isApp(o); o = o.owner as DatabaseObjectType) {
+                if (o.owner.path == documentData.signature.ownerPath) {
+                    if (o.owner.verifyKey && await o.owner.verifyKey?.export == documentData.signature.verifyKey) owner = o.owner;
+                    else throw new Error("wrong verifyKey");
+                } else if (!o.databaseOptions.ownerMayWrite) break;
+            }
+            if (!owner!) throw new Error("wrong signature's owner");
+            verifyKey = owner!.verifyKey!;
+        }
 
         let verifyObject = { ...documentData };
         delete verifyObject.signature;
 
-        if (!await ObjectsCrypto.verify(verifyObject, documentData.signature.signature, owner!.verifyKey!)) throw new Error("wrong signature");
+        if (!await ObjectsCrypto.verify(verifyObject, documentData.signature.signature, verifyKey)) throw new Error("wrong signature");
 
 
 
@@ -120,7 +128,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
             (object as { [key: string]: any })[k] = ObjectsCrypto.sortObject(documentData[k], true)
         );
 
-        if (!opaque && object.databaseOptions.encryptedProperties?.length && documentData.encryptedProperties) {
+        if (mode != "opaque" && object.databaseOptions.encryptedProperties?.length && documentData.encryptedProperties) {
             if (!keyContainer) keyContainer = (App.isApp(parent) ? parent : (parent as DatabaseObjectType).app).keyStore.createKeyContainer();
 
             let publicEncryptionKey = await PublicEncryptionKey.import(documentData.encryptedProperties.publicKey);
@@ -129,15 +137,20 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
             let secretKey: SecretKey;
 
             let publicKeys = { ...documentData.encryptedProperties.ownerEncryptedPrivateKey, ...documentData.encryptedProperties.encryptedPrivateKey };
-            let encryptionKeyPaths = Object.keys(publicKeys).filter(k => object.app.keyStore.hasKey(k, ObjectsKeyType.PrivateEncryption, keyContainer));
-            for (let i = 0; i < encryptionKeyPaths.length; i++) {
-                let privateEncryptionKey = await object.app.keyStore.getKey(encryptionKeyPaths[i], ObjectsKeyType.PrivateEncryption, keyContainer) as PrivateEncryptionKey;
+            if (mode == "device") {
+                if (publicKeys["device"]) secretKey = await SecretKey.import(await ObjectsCrypto.decrypt(publicKeys["key"][1], await SecretKey.derive(await object.app.keyStore.getKey("device", ObjectsKeyType.PrivateEncryption) as PrivateEncryptionKey, publicEncryptionKey)));
+                else throw new Error("Not encrypted for device key");
+            } else {
+                let encryptionKeyPaths = Object.keys(publicKeys).filter(k => object.app.keyStore.hasKey(k, ObjectsKeyType.PrivateEncryption, keyContainer));
+                for (let i = 0; i < encryptionKeyPaths.length; i++) {
+                    let privateEncryptionKey = await object.app.keyStore.getKey(encryptionKeyPaths[i], ObjectsKeyType.PrivateEncryption, keyContainer) as PrivateEncryptionKey;
 
-                if (await privateEncryptionKey.publicKey.export == publicKeys[encryptionKeyPaths[i]][0]) {
-                    secretKey = await SecretKey.import(await ObjectsCrypto.decrypt(publicKeys[encryptionKeyPaths[i]][1], await SecretKey.derive(privateEncryptionKey, publicEncryptionKey)));
-                    break;
-                } else
-                    console.log("wrong publicEncryptionKey:", publicKeys[encryptionKeyPaths[i]][0])
+                    if (await privateEncryptionKey.publicKey.export == publicKeys[encryptionKeyPaths[i]][0]) {
+                        secretKey = await SecretKey.import(await ObjectsCrypto.decrypt(publicKeys[encryptionKeyPaths[i]][1], await SecretKey.derive(privateEncryptionKey, publicEncryptionKey)));
+                        break;
+                    } else
+                        console.log("wrong publicEncryptionKey:", publicKeys[encryptionKeyPaths[i]][0])
+                }
             }
 
             if (!secretKey!) throw new Error("no privateEncryptionKey");
@@ -159,12 +172,12 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         return object as T;
     }
 
-    async childFromDocumentData<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, documentData: DocumentData, id: string = AutoId.newId(), opaque: boolean = false, keyContainer?: KeyContainer): Promise<C> {
-        return await DatabaseObject.fromDocumentData.call(child, parent, documentData, id, opaque, keyContainer);
+    async childFromDocumentData<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, documentData: DocumentData, id: string = AutoId.newId(), mode: "default" | "opaque" | "device" = "default", keyContainer?: KeyContainer): Promise<C> {
+        return await DatabaseObject.fromDocumentData.call(child, parent, documentData, id, mode, keyContainer);
     }
 
-    async updateFromDocumentData(constructor: new (parent: P, id?: string) => T, documentData: DocumentData, opaque: boolean = false, keyContainer?: KeyContainer): Promise<this> {
-        let updated = await DatabaseObject.fromDocumentData.call(constructor, this.parent, documentData, this.id, opaque, keyContainer);
+    async updateFromDocumentData(constructor: new (parent: P, id?: string) => T, documentData: DocumentData, mode: "default" | "opaque" | "device" = "default", keyContainer?: KeyContainer): Promise<this> {
+        let updated = await DatabaseObject.fromDocumentData.call(constructor, this.parent, documentData, this.id, mode, keyContainer);
         Object.keys(this).forEach(k => (this as { [key: string]: any })[k] = updated[k]);
         return this;
     }
@@ -187,7 +200,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     }
 
     // TODO extract sign
-    static async toDocumentData(objects: DatabaseObjectType[], incrementVersion = false, keyContainer?: KeyContainer): Promise<DocumentData[]> {
+    static async toDocumentData(objects: DatabaseObjectType[], mode: "default" | "incrementVersion" | "device" = "default", keyContainer?: KeyContainer): Promise<DocumentData[]> {
         if (objects.length == 0) return [];
 
         if (!keyContainer) keyContainer = objects[0].app.keyStore.createKeyContainer();
@@ -213,8 +226,14 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
                 let ownerEncryptedPrivateKey: { [path: string]: [string, string] } = {};
 
                 let ownerPublicKeys: { [path: string]: PublicEncryptionKey } = {};
-                for (let o: DatabaseObjectType = object; !App.isApp(o) && o.databaseOptions.ownerMayRead; o = o.owner as DatabaseObjectType) ownerPublicKeys[o.owner.path] = o.owner.publicKey!;
-                if (object.databaseOptions.hasPassword && object.publicKey) ownerPublicKeys[object.path] = object.publicKey;
+                if (mode == "device") {
+                    if (object.app.keyStore.hasKey("device", ObjectsKeyType.PrivateEncryption))
+                        ownerPublicKeys = { "device": (await object.app.keyStore.getKey("device", ObjectsKeyType.PrivateEncryption) as PrivateEncryptionKey).publicKey };
+                    else throw new Error("no device key stored");
+                } else {
+                    for (let o: DatabaseObjectType = object; !App.isApp(o) && o.databaseOptions.ownerMayRead; o = o.owner as DatabaseObjectType) ownerPublicKeys[o.owner.path] = o.owner.publicKey!;
+                    if (object.databaseOptions.hasPassword && object.publicKey) ownerPublicKeys[object.path] = object.publicKey;
+                }
 
                 await Promise.all([
                     ...Object.entries(object.publicKeys ?? {}).filter(k => !ownerPublicKeys[k[0]]).map(async publicKey => encryptedPrivateKey[await publicKey[0]] = [await publicKey[1].export, await ObjectsCrypto.encrypt(await secretKey.export, await SecretKey.derive(privateEncryptionKey, publicKey[1]))]),
@@ -233,16 +252,21 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
             documentData["path"] = object.path;
             if (object.verifyKey) documentData["verifyKey"] = await object.verifyKey?.export;
             if (object.publicKey) documentData["publicKey"] = await object.publicKey?.export;
-            if (incrementVersion) documentData["version"]++;
+            if (mode == "incrementVersion") documentData["version"]++;
 
 
             let signKey: SignKey;
             let ownerPath: string;
-            for (let o: DatabaseObjectType = object; !signKey! && !App.isApp(o); o = o.owner as DatabaseObjectType) {
-                if (object.app.keyStore.hasKey(o.owner.path, ObjectsKeyType.Sign, keyContainer)) {
-                    signKey = await object.app.keyStore.getKey(o.owner.path, ObjectsKeyType.Sign, keyContainer) as SignKey;
-                    ownerPath = o.owner.path;
-                } else if (!App.isApp(o.owner) && !o.owner.databaseOptions.ownerMayWrite) break;
+            if (mode == "device") {
+                ownerPath = "device";
+                signKey = await object.app.keyStore.getKey("device", ObjectsKeyType.Sign) as SignKey;
+            } else {
+                for (let o: DatabaseObjectType = object; !signKey! && !App.isApp(o); o = o.owner as DatabaseObjectType) {
+                    if (object.app.keyStore.hasKey(o.owner.path, ObjectsKeyType.Sign, keyContainer)) {
+                        signKey = await object.app.keyStore.getKey(o.owner.path, ObjectsKeyType.Sign, keyContainer) as SignKey;
+                        ownerPath = o.owner.path;
+                    } else if (!App.isApp(o.owner) && !o.owner.databaseOptions.ownerMayWrite) break;
+                }
             }
 
             // TODO deviceSignKey
@@ -259,8 +283,8 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
             return documentData;
         }));
     }
-    async toDocumentData(incrementVersion = false, keyContainer?: KeyContainer): Promise<{ [key: string]: any }> {
-        return (await DatabaseObject.toDocumentData([this], incrementVersion, keyContainer))[0];
+    async toDocumentData(mode: "default" | "incrementVersion" | "device" = "default", keyContainer?: KeyContainer): Promise<{ [key: string]: any }> {
+        return (await DatabaseObject.toDocumentData([this], mode, keyContainer))[0];
     }
 
     getDeleteDatabaseObject(): this {
@@ -388,7 +412,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
         if (!onSnapshot) {
             if (!keyContainer) keyContainer = dummy.app.keyStore.createKeyContainer();
-            return query.get({ source: "server" }).then(s => Promise.all(s.docs.map(d => DatabaseObject.fromDocumentData.call(this, parent, d.data(), d.id, opaque, keyContainer) as Promise<T>)));
+            return query.get({ source: "server" }).then(s => Promise.all(s.docs.map(d => DatabaseObject.fromDocumentData.call(this, parent, d.data(), d.id, opaque ? "opaque" : "default", keyContainer) as Promise<T>)));
         }
         else
             return query.onSnapshot(async s => {
@@ -398,7 +422,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
                 // console.log(s.docs);
                 // onSnapshot((await Promise.all(s.docs.map(d => DatabaseObject.getObjectFromDocument.call(this, parent, d)))).map(o => ({ obj: o as T, change: changes.find(c => c.doc.id == o.id) })));
                 let sKeyContainer = dummy.app.keyStore.createKeyContainer();
-                onSnapshot(await Promise.all(s.docs.map(d => DatabaseObject.fromDocumentData.call(this, parent, d.data(), d.id, opaque, sKeyContainer))) as T[]);
+                onSnapshot(await Promise.all(s.docs.map(d => DatabaseObject.fromDocumentData.call(this, parent, d.data(), d.id, opaque ? "opaque" : "default", sKeyContainer))) as T[]);
             }) as (() => void);
     }
 
@@ -442,7 +466,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
         if (!keyContainer) keyContainer = objects[0].app.keyStore.createKeyContainer();
 
-        let result = await objects[0].app.firebase.functions("europe-west3").httpsCallable("setDocuments")(JSON.stringify(await DatabaseObject.toDocumentData(objects, true, keyContainer)));
+        let result = await objects[0].app.firebase.functions("europe-west3").httpsCallable("setDocuments")(JSON.stringify(await DatabaseObject.toDocumentData(objects, "incrementVersion", keyContainer)));
         if (result.data !== true) throw new Error("unkown error");
         objects.forEach(o => o.version++);
     }
