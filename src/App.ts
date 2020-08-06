@@ -16,6 +16,13 @@ export class App {
     readonly verifyKey: VerifyKey;
     readonly publicKey: PublicEncryptionKey;
 
+    readonly databaseOptions: {
+        type: "app"
+        hasPassword: true
+        passwordCanSign: true
+
+    } = { type: "app", hasPassword: true, passwordCanSign: true };
+
 
     // TODO deviceVerify/publicKey
     // TODO keyStore any??

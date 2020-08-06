@@ -16,10 +16,10 @@ export class KeyStore {
         this.passwordCheck = stored.passwordCheck;
 
         // TODO test, move checkPassword here - otherwise create method to call getStoragePassword
-        this.getStoragePassword = () => getStoragePassword(this.checkPassword);
+        this.getStoragePassword = () => this.passwordCheck ? getStoragePassword(this.checkPassword) : Promise.resolve("");
 
         if (Object.keys(this.keys).length || out) {
-            if (!this.passwordCheck) throw new Error("no passwordCheck");
+            // if (!this.passwordCheck) throw new Error("no passwordCheck");
 
             let storagePasswordPromise = this.getStoragePassword();
 
@@ -77,7 +77,7 @@ export class KeyStore {
     }
 
     createKeyContainer(storagePasswordPromise?: Promise<string>) {
-        if (!this.passwordCheck) throw new Error("no passwordCheck");
+        // if (!this.passwordCheck) throw new Error("no passwordCheck");
 
         // TODO wrong password
         let requestPromptKeys: () => void = () => { };
@@ -130,7 +130,7 @@ export class KeyStore {
         let sWithoutPromptKey = !sPromptKey && (signKeyOptions.store == "persistent" || signKeyOptions.store == "session");
         let withoutPromptKey = pWithoutPromptKey || sWithoutPromptKey;
 
-        if ((promptKey || withoutPromptKey) && !this.passwordCheck) throw new Error("no passwordCheck");
+        // if ((promptKey || withoutPromptKey) && !this.passwordCheck) throw new Error("no passwordCheck");
 
         let storagePasswordPromise: Promise<string> | null = (promptKey || withoutPromptKey) ? this.getStoragePassword() : null;
         // TODO wrong password
