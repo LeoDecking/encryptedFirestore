@@ -13,6 +13,7 @@ type DocumentData = {
     {
         publicKey: string,
         encrypted: string,
+        publicKeyPaths: string[],
         encryptedPrivateKey: { [path: string]: [string, string] } //[publicKey, encryptedPrivateKey]
         ownerEncryptedPrivateKey: { [path: string]: [string, string] } //[publicKey, encryptedPrivateKey]
     },
@@ -183,15 +184,15 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     }
 
     // TODO test
-    clone(): this {
-        return new (this.constructor as new (parent: P, id?: string) => this)(this.parent, this.id).cloneFrom(this);
+    clone(parent: P = this.parent): this {
+        return new (this.constructor as new (parent: P, id?: string) => this)(parent, this.id).cloneFrom(this);
     }
 
     cloneFrom(object: this): this {
-        Object.keys(this).forEach(k => (this as { [key: string]: any })[k] = (this.ignoreProperties.indexOf(k) == -1) ? ObjectsCrypto.sortObject((object as { [key: string]: any })[k]) : (object as { [key: string]: any })[k]);
+        Object.keys(this).forEach(k => (this as { [key: string]: any })[k] = k == "parent" ? this.parent : (this.ignoreProperties.indexOf(k) == -1) ? ObjectsCrypto.sortObject((object as { [key: string]: any })[k]) : (object as { [key: string]: any })[k]);
         if (object.children) {
             this.children = {};
-            Object.keys(object.children).forEach(ct => { this.children![ct] = {}; Object.keys(object.children![ct]).forEach(c => this.children![ct]![c] = object.children![ct]![c]!.clone()); });
+            Object.keys(object.children).forEach(ct => { this.children![ct] = {}; Object.keys(object.children![ct]).forEach(c => this.children![ct]![c] = object.children![ct]![c]!.clone(this as any)); });
         }
         if (object.verifyKey) this.verifyKey = object.verifyKey;
         if (object.publicKey) this.publicKey = object.publicKey;
@@ -244,6 +245,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
                 documentData.encryptedProperties = {
                     encrypted: await ObjectsCrypto.encrypt(encryptedProperties, secretKey),
                     publicKey: await privateEncryptionKey.publicKey.export,
+                    publicKeyPaths: Object.keys(encryptedPrivateKey),
                     encryptedPrivateKey: encryptedPrivateKey,
                     ownerEncryptedPrivateKey: ownerEncryptedPrivateKey
                 };
