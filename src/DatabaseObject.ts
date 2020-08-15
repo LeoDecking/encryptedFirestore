@@ -7,7 +7,7 @@ import { Key } from "objects-crypto/dist/Key/Key";
 // import { app } from "firebase";
 
 
-type DocumentData = {
+export type DocumentData = {
     [key: string]: any,
     encryptedProperties?:
     {
@@ -94,10 +94,10 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     }
 
     // TODO id from path
-    static async fromDocumentData<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], documentData: DocumentData, id: string = AutoId.newId(), mode: "default" | "opaque" | "device" = "default", keyContainer?: KeyContainer): Promise<T> {
+    static async fromDocumentData<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], documentData: DocumentData, mode: "default" | "opaque" | "device" = "default", keyContainer?: KeyContainer): Promise<T> {
         if (!documentData.signature) throw new Error("no signature");
 
-        let object = new this(parent, id);
+        let object = new this(parent, documentData.path.split("/").pop());
         if (documentData.path != object.path) throw new Error("wrong path: " + object.path);
 
         let verifyKey: VerifyKey;
@@ -139,7 +139,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
             let publicKeys = { ...documentData.encryptedProperties.ownerEncryptedPrivateKey, ...documentData.encryptedProperties.encryptedPrivateKey };
             if (mode == "device") {
-                if (publicKeys["device"]) secretKey = await SecretKey.import(await ObjectsCrypto.decrypt(publicKeys["key"][1], await SecretKey.derive(await object.app.keyStore.getKey("device", ObjectsKeyType.PrivateEncryption) as PrivateEncryptionKey, publicEncryptionKey)));
+                if (publicKeys["device"]) secretKey = await SecretKey.import(await ObjectsCrypto.decrypt(publicKeys["device"][1], await SecretKey.derive(await object.app.keyStore.getKey("device", ObjectsKeyType.PrivateEncryption) as PrivateEncryptionKey, publicEncryptionKey)));
                 else throw new Error("Not encrypted for device key");
             } else {
                 let encryptionKeyPaths = Object.keys(publicKeys).filter(k => object.app.keyStore.hasKey(k, ObjectsKeyType.PrivateEncryption, keyContainer));
@@ -174,11 +174,11 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     }
 
     async childFromDocumentData<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, documentData: DocumentData, id: string = AutoId.newId(), mode: "default" | "opaque" | "device" = "default", keyContainer?: KeyContainer): Promise<C> {
-        return await DatabaseObject.fromDocumentData.call(child, parent, documentData, id, mode, keyContainer);
+        return await DatabaseObject.fromDocumentData.call(child, parent, documentData, mode, keyContainer);
     }
 
     async updateFromDocumentData(constructor: new (parent: P, id?: string) => T, documentData: DocumentData, mode: "default" | "opaque" | "device" = "default", keyContainer?: KeyContainer): Promise<this> {
-        let updated = await DatabaseObject.fromDocumentData.call(constructor, this.parent, documentData, this.id, mode, keyContainer);
+        let updated = await DatabaseObject.fromDocumentData.call(constructor, this.parent, documentData, mode, keyContainer);
         Object.keys(this).forEach(k => (this as { [key: string]: any })[k] = updated[k]);
         return this;
     }
@@ -414,7 +414,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
         if (!onSnapshot) {
             if (!keyContainer) keyContainer = dummy.app.keyStore.createKeyContainer();
-            return query.get({ source: "server" }).then(s => Promise.all(s.docs.map(d => DatabaseObject.fromDocumentData.call(this, parent, d.data(), d.id, opaque ? "opaque" : "default", keyContainer) as Promise<T>)));
+            return query.get({ source: "server" }).then(s => Promise.all(s.docs.map(d => DatabaseObject.fromDocumentData.call(this, parent, d.data(), opaque ? "opaque" : "default", keyContainer) as Promise<T>)));
         }
         else
             return query.onSnapshot(async s => {
@@ -424,7 +424,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
                 // console.log(s.docs);
                 // onSnapshot((await Promise.all(s.docs.map(d => DatabaseObject.getObjectFromDocument.call(this, parent, d)))).map(o => ({ obj: o as T, change: changes.find(c => c.doc.id == o.id) })));
                 let sKeyContainer = dummy.app.keyStore.createKeyContainer();
-                onSnapshot(await Promise.all(s.docs.map(d => DatabaseObject.fromDocumentData.call(this, parent, d.data(), d.id, opaque ? "opaque" : "default", sKeyContainer))) as T[]);
+                onSnapshot(await Promise.all(s.docs.map(d => DatabaseObject.fromDocumentData.call(this, parent, d.data(), opaque ? "opaque" : "default", sKeyContainer))) as T[]);
             }) as (() => void);
     }
 

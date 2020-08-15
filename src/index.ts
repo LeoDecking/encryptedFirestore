@@ -1,4 +1,4 @@
-export { DatabaseObject } from "./DatabaseObject";
+export { DatabaseObject, DocumentData } from "./DatabaseObject";
 export { App } from "./App";
 export {KeyStore, KeyContainer } from "./KeyStore";
 

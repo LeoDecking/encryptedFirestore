@@ -33,22 +33,47 @@ export class KeyStore {
             }
             if (out) out.keyContainer = this.createKeyContainer(storagePasswordPromise);
         }
+
+        // await sign before export
+        if (!this.hasKey("device", ObjectsKeyType.Sign)) {
+            let encryptionBits = crypto.getRandomValues(new Uint8Array(32));
+            let signBits = crypto.getRandomValues(new Uint8Array(32));
+
+            let storageKey = SecretKey.generate("", "withoutPrompt");
+            let encryptedEncryption = storageKey.then(s => ObjectsCrypto.encrypt(Array.from(encryptionBits), s)).then(e => this.keys["device"].privateEncryptionKey!.encryptedKey = e);
+            let encryptedSign = storageKey.then(s => ObjectsCrypto.encrypt(Array.from(signBits), s)).then(e => this.keys["device"].signKey!.encryptedKey = e);
+
+            this.keys["device"] = {
+                privateEncryptionKey: {
+                    persistent: true,
+                    prompt: false,
+                    key: PrivateEncryptionKey.import(encryptionBits)
+                },
+                signKey: {
+                    persistent: true,
+                    prompt: false,
+                    key: encryptedEncryption.then(() => encryptedSign).then(() => SignKey.import(signBits))
+                }
+            };
+        }
     }
 
     private async checkPassword(password: string): Promise<boolean> {
         return !this.passwordCheck || !await ObjectsCrypto.decrypt(this.passwordCheck, await SecretKey.generate(password, "withoutPrompt")).then(null, () => false);
     }
 
-    async export(): Promise<string> {
+    async export(noKeys: boolean = false): Promise<string> {
         let persistentKeys: KeyStore["keys"] = {};
-        Object.entries(this.keys).forEach(k => {
-            if (k[1].privateEncryptionKey?.persistent || k[1].signKey?.persistent) {
-                persistentKeys[k[0]] = {};
-                if (k[1].privateEncryptionKey?.persistent) persistentKeys[k[0]].privateEncryptionKey = { ...k[1].privateEncryptionKey, key: null };
-                if (k[1].signKey?.persistent) persistentKeys[k[0]].signKey = { ...k[1].signKey, key: null };
-            };
+
+        await this.keys["device"].signKey?.key; // key is set after encryptedKey
+
+        Object.entries(this.keys).filter(k => noKeys ? k[0] == "device" : k[1].privateEncryptionKey?.persistent || k[1].signKey?.persistent).forEach(k => {
+            persistentKeys[k[0]] = {};
+            if (k[1].privateEncryptionKey?.persistent) persistentKeys[k[0]].privateEncryptionKey = { ...k[1].privateEncryptionKey, key: null };
+            if (k[1].signKey?.persistent) persistentKeys[k[0]].signKey = { ...k[1].signKey, key: null };
         });
-        return JSON.stringify({ keys: persistentKeys, passwordCheck: this.passwordCheck });
+
+        return JSON.stringify({ passwordCheck: this.passwordCheck, keys: persistentKeys });
     }
 
     async setStoragePassword(oldPassword: string, newPassword: string): Promise<void> {
@@ -64,16 +89,7 @@ export class KeyStore {
                 k.encryptedKey = await ObjectsCrypto.encrypt(await ObjectsCrypto.decrypt(k.encryptedKey, k.prompt ? oldStoragePromptKey! : oldStorageKey!), k.prompt ? newStoragePromptKey : newStorageKey);
             }) : []),
             ObjectsCrypto.encrypt(true, newStorageKey).then(c => this.passwordCheck = c) as Promise<void>
-        ]).then(async () => {
-            if (!this.hasKey("device", ObjectsKeyType.Sign)) {
-                let encryptionBits = crypto.getRandomValues(new Uint8Array(32));
-                let signBits = crypto.getRandomValues(new Uint8Array(32));
-                await Promise.all([
-                    this.setKey("device", await PrivateEncryptionKey.import(signBits), await ObjectsCrypto.encrypt(Array.from(encryptionBits), newStorageKey), { store: "persistent", prompt: false }),
-                    this.setKey("device", await SignKey.import(signBits), await ObjectsCrypto.encrypt(Array.from(signBits), newStorageKey), { store: "persistent", prompt: false })
-                ]);
-            }
-        });
+        ]);
     }
 
     createKeyContainer(storagePasswordPromise?: Promise<string>) {
