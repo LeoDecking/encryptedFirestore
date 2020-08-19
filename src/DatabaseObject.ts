@@ -414,7 +414,10 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
         if (!onSnapshot) {
             if (!keyContainer) keyContainer = dummy.app.keyStore.createKeyContainer();
-            return query.get({ source: "server" }).then(s => Promise.all(s.docs.map(d => DatabaseObject.fromDocumentData.call(this, parent, d.data(), opaque ? "opaque" : "default", keyContainer) as Promise<T>)));
+            return query.get({ source: "server" }).then(s => Promise.all(s.docs.map(d => DatabaseObject.fromDocumentData.call(this, parent, d.data(), opaque ? "opaque" : "default", keyContainer) as Promise<T>))).catch(e => {
+                console.log(e);
+                throw new Error("no connection");
+            });
         }
         else
             return query.onSnapshot(async s => {

@@ -8,6 +8,7 @@ export class KeyStore {
     private getStoragePassword: () => Promise<string>;
 
 
+    // TODO generated key als parameter -> biometrisch...
     // TODO wrong password
     constructor(json: string, getStoragePassword: (checkPassword: (p: string) => Promise<boolean>) => Promise<string>, out?: { keyContainer?: KeyContainer }) {
         let stored = JSON.parse(json ?? "{}");
