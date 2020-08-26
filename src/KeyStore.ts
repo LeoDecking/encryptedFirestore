@@ -37,8 +37,8 @@ export class KeyStore {
 
         // await sign before export
         if (!this.hasKey("device", ObjectsKeyType.Sign)) {
-            let encryptionBits = crypto.getRandomValues(new Uint8Array(32));
-            let signBits = crypto.getRandomValues(new Uint8Array(32));
+            let encryptionBits = ObjectsCrypto.getRandomBytes(32);
+            let signBits = ObjectsCrypto.getRandomBytes(32);
 
             let storageKey = SecretKey.generate("", "withoutPrompt");
             let encryptedEncryption = storageKey.then(s => ObjectsCrypto.encrypt(Array.from(encryptionBits), s)).then(e => this.keys["device"].privateEncryptionKey!.encryptedKey = e);

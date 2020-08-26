@@ -4,6 +4,7 @@ import { App } from "./App";
 import { KeyContainer } from "./KeyStore";
 import { PublicEncryptionKey, VerifyKey, ObjectsCrypto, PrivateEncryptionKey, SignKey, SecretKey, ObjectsKeyType } from "objects-crypto";
 import { Key } from "objects-crypto/dist/Key/Key";
+import { FirebaseError } from "firebase";
 // import { app } from "firebase";
 
 
@@ -362,6 +363,40 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     }
 
 
+    async sendNotification(message: string, keyContainer: KeyContainer = this.app.keyStore.createKeyContainer()) {
+        let notification: { path: string, message: string, signature?: { signature: string, ownerPath: string, verifyKey: string }, timestamp: number }
+            = {
+            path: this.path,
+            message: message,
+            timestamp: new Date().getTime()
+        };
+
+
+        let signKey: SignKey;
+        let ownerPath: string;
+
+        for (let o: DatabaseObjectType = this; !signKey! && !App.isApp(o); o = o.owner as DatabaseObjectType) {
+            if (this.app.keyStore.hasKey(o.path, ObjectsKeyType.Sign, keyContainer)) {
+                signKey = await this.app.keyStore.getKey(o.path, ObjectsKeyType.Sign, keyContainer) as SignKey;
+                ownerPath = o.path;
+            } else if (!App.isApp(o) && !o.databaseOptions.ownerMayWrite) break;
+        }
+
+        // TODO deviceSignKey
+        if (!signKey!) throw new Error("no signKey");
+
+        notification.signature = {
+            signature: await ObjectsCrypto.sign(notification, signKey!),
+            ownerPath: ownerPath!,
+            verifyKey: await signKey!.verifyKey.export
+        };
+
+        // console.log("signed", documentData);
+
+        let result = await this.app.firebase.functions("europe-west3").httpsCallable("sendNotification")(JSON.stringify(notification));
+        if (result.data !== true) throw new Error("unkown error");
+    }
+
 
 
     // TODO ids from firestore (more than 10)
@@ -371,10 +406,9 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     static fromFirestore<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], id: string, opaque: boolean, onSnapshot: (object: T) => void, keyContainer?: KeyContainer): () => void;
     static fromFirestore<T extends DatabaseObjectType>(this: new (parent: T["parent"], id?: string) => T, parent: T["parent"], id: string, opaque: boolean = false, onSnapshot?: ((object: T) => void) | null, keyContainer?: KeyContainer): Promise<T> | (() => void) {
         if (!onSnapshot) {
-            return new Promise(async (resolve, reject) => {
-                let documents = await DatabaseObject.collectionFromFirestore.call(this, parent, [id], opaque, keyContainer);
-                if (documents.length != 1) reject("document not found");
-                else resolve(documents[0] as T);
+            return DatabaseObject.collectionFromFirestore.call(this, parent, [id], opaque, keyContainer).then((documents: T[]) => {
+                if (documents.length != 1) throw new Error("document not found");
+                else return documents[0] as T;
             });
         } else {
             return DatabaseObject.collectionFromFirestore.call(this, parent, [id], opaque, ((objects: T[]) => onSnapshot(objects[0])));
@@ -416,7 +450,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
             if (!keyContainer) keyContainer = dummy.app.keyStore.createKeyContainer();
             return query.get({ source: "server" }).then(s => Promise.all(s.docs.map(d => DatabaseObject.fromDocumentData.call(this, parent, d.data(), opaque ? "opaque" : "default", keyContainer) as Promise<T>))).catch(e => {
                 console.log(e);
-                throw new Error("no connection");
+                throw (e as FirebaseError).code ? new Error("no connection") : e;
             });
         }
         else
