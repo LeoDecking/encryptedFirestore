@@ -500,7 +500,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
 
     static async uploadToFirestore(objects: DatabaseObjectType[], keyContainer?: KeyContainer): Promise<void> {
-        console.log("toFirestore", objects);
+        // console.log("toFirestore", objects);
         if (objects.length == 0) return;
 
         if (!keyContainer) keyContainer = objects[0].app.keyStore.createKeyContainer();
