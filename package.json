@@ -14,12 +14,14 @@
   },
   "homepage": "https://github.com/LeoDecking/encryptedFirestore#readme",
   "devDependencies": {
+    "@types/ecurve": "^1.0.0",
     "typescript": "^3.8.3"
   },
   "dependencies": {
     "@stablelib/base64": "^1.0.0",
     "@stablelib/utf8": "^1.0.0",
-    "firebase": "^7.13.2",
-    "tweetnacl": "^1.0.3"
+    "bigi": "^1.4.2",
+    "ecurve": "^1.0.6",
+    "firebase": "^7.13.2"
   }
 }

@@ -1,0 +1,66 @@
+Bei ALLEN (außer public) CryptoKeys wird exportable=false gesetzt!
+SignKeys und PrivateKeys werden NIE in der Datenbank gespeichert, auch nicht verschlüsselt -> sie könnten entschlüsselt werden!
+
+Jedes DatabaseObject hat einen SignKey mit zugehörigem VerifyKey.
+DatabaseObjects können von beliebigen höherstehenden Parents signiert werden (bis dahin muss jeweils mayParentWrite gesetzt sein) - die id vom Signateur wird der Signatur vorangestellt.
+Für Offline-Speicherung kann auch mit einem Gerät-eigenen SignKey signiert werden.
+
+Verschlüsselt wird jedes Mal mit einem neuen zufälligen SecretKey.
+Dieser wird mit einem zufälligen PrivateKey und den PublicKeys der leseberechtigen DatabaseObjects verschlüsselt.
+=>Der Schreiber entscheidet, wer lesen kann.
+=>publicKeys werden in DatabaseObject gespeichert
+=>Der zum zufälligen PrivateKey gehörende PublicKey wird übergeben
+
+KeyStorage
+Wenn man das erste Mal einen Key eingibt, der über eine Session hinaus oder nur mit prompt gespeichert werden soll, muss man zusätzlich das Speicher-Passwort eingeben.
+(Der zugehöige Storage-CryptoKey wird danach nicht gespeichert, da man sonst andere Keys entschlüsseln könnte)
+Im KeyStore werden sowohl die verschlüsselten raw-keys als auch die CryptoKeys gespeichert, bei Zugriff wird geguckt, ob der key erst noch entschlüsselt werden muss.
+=>auch entschlüsselte keys werden auf exportable=false gesetzt, die entschlüsselte raw-version direkt gelöscht
+
+
+Es gibt also:
+
+SignKey, VerifyKey
+PrivateKey, PublicKey
+SecretKey
+
+Werden weiterhin mit argon2 generiert
+
+
+
+NEEEEIIIIN:
+Hacker können derivedKey abgreifen und damit unfug machen :()
+=> jedes mal wird mit einem neuen KeyPair verschlüsselt, sodass der derivedKey nur für das jeweilige KeyPair gültig ist.
+
+
+Schreiben:
+Fest sind: Password -> Sign-/VerifyKey + Secret-/PublicEncryptionKey (nur, wenn jeweils nötig)
+
+1. AES-Key generieren
+2. Daten mit AES-Key verschlüsseln
+
+3. DH-KeyPair generieren
+4. AES-Key mit DH-privateKey für publicEncryptionKeys der anderen verschlüsseln
+
+5. Mit SignKey von einem owner signieren, id des owners der Signatur voranstellen
+
+Lesen:
+
+1. Signature mit VerifyKey des angegeben owners (wenn er owner ist) überprüfen
+
+2. Mit SecretKey und angegebenem PublicKey AES-Key entschlüsseln
+3. Mit AES-Key Daten entschlüsseln
+
+
+Key ändern:
+Alles vom Key signierte und alles für den Key verschlüsselte muss neu gemacht werden.
+
+
+encrpyted: {
+    publicKey: DH-PublicKey,
+    encrpyted: iv + encrypted,
+    encryptedPrivateKey: {
+        pAbc: encrypted for pAbc,
+        pC13: encrpyted for pC13
+    }
+}
