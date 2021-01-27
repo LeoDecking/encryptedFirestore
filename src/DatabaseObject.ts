@@ -3,8 +3,7 @@ import { DatabaseObjectType, DatabaseChildObjectType, DatabaseAncestorObjectType
 import { App } from "./App";
 import { KeyContainer } from "./KeyStore";
 import { PublicEncryptionKey, VerifyKey, ObjectsCrypto, PrivateEncryptionKey, SignKey, SecretKey, ObjectsKeyType } from "objects-crypto";
-import { Key } from "objects-crypto/dist/Key/Key";
-import { FirebaseError } from "firebase";
+import firebase from "firebase";
 // import { app } from "firebase";
 
 
@@ -450,7 +449,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
             if (!keyContainer) keyContainer = dummy.app.keyStore.createKeyContainer();
             return query.get({ source: "server" }).then(s => Promise.all(s.docs.map(d => DatabaseObject.fromDocumentData.call(this, parent, d.data(), opaque ? "opaque" : "default", keyContainer) as Promise<T>))).catch(e => {
                 console.log(e);
-                throw (e as FirebaseError).code ? new Error("no connection") : e;
+                throw (e as firebase.FirebaseError).code ? new Error("no connection") : e;
             });
         }
         else

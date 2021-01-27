@@ -17,7 +17,7 @@ export class KeyStore {
         this.passwordCheck = stored.passwordCheck;
 
         // TODO test, move checkPassword here - otherwise create method to call getStoragePassword
-        this.getStoragePassword = () => this.passwordCheck ? getStoragePassword(this.checkPassword) : Promise.resolve("");
+        this.getStoragePassword = () => this.passwordCheck ? getStoragePassword(p => this.checkPassword(p)) : Promise.resolve("");
 
         if (Object.keys(this.keys).length || out) {
             // if (!this.passwordCheck) throw new Error("no passwordCheck");
@@ -60,7 +60,7 @@ export class KeyStore {
     }
 
     private async checkPassword(password: string): Promise<boolean> {
-        return !this.passwordCheck || !await ObjectsCrypto.decrypt(this.passwordCheck, await SecretKey.generate(password, "withoutPrompt")).then(null, () => false);
+        return !this.passwordCheck || await ObjectsCrypto.decrypt(this.passwordCheck, await SecretKey.generate(password, "withoutPrompt")).then(() => true, () => false);
     }
 
     async export(noKeys: boolean = false): Promise<string> {
