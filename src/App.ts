@@ -2,7 +2,7 @@ import firebase from "firebase/app";
 import { DatabaseObjectType, DatabaseChildObjectType } from "./DatabaseObjectType";
 // import { KeyStore } from "./KeyStore";
 import { DatabaseObject } from "./DatabaseObject";
-import { KeyStore } from "./KeyStore";
+import { KeyContainer, KeyStore } from "./KeyStore";
 import { PublicEncryptionKey, VerifyKey } from "objects-crypto";
 
 const AppSymbol = Symbol();
@@ -41,15 +41,17 @@ export class App {
         return new child(this, id);
     }
 
-    childFromFirestore<C extends DatabaseChildObjectType<App>>(child: new (parent: App, id?: string) => C, id: string): Promise<C>;
-    childFromFirestore<C extends DatabaseChildObjectType<App>>(child: new (parent: App, id?: string) => C, id: string, onSnapshot: (object: C) => void): () => void;
-    childFromFirestore<C extends DatabaseChildObjectType<App>>(child: new (parent: App, id?: string) => C, id: string, onSnapshot?: (object: C) => void): Promise<C> | (() => void) {
-        return DatabaseObject.fromFirestore.call(child as any, this, id, onSnapshot);
+    childFromFirestore<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, id: string, opaque?: boolean, onSnapshot?: null, keyContainer?: KeyContainer): Promise<C>;
+    childFromFirestore<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, id: string, opaque: boolean, onSnapshot: (object: C) => void): () => void;
+    childFromFirestore<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, id: string, opaque: boolean = false, onSnapshot?: ((object: C) => void) | null, keyContainer?: KeyContainer): Promise<C> | (() => void) {
+        return DatabaseObject.fromFirestore.call(child as any, this, id, opaque, onSnapshot, keyContainer);
     }
 
-    childrenFromFirestore<C extends DatabaseChildObjectType<App>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[] | string[]): Promise<C[]>;
-    childrenFromFirestore<C extends DatabaseChildObjectType<App>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[] | string[], onSnapshot: (objects: C[]) => void): () => void;
-    childrenFromFirestore<C extends DatabaseChildObjectType<App>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[] | string[] = [], onSnapshot?: (objects: C[]) => void): Promise<C[]> | (() => void) {
-        return DatabaseObject.collectionFromFirestore.call(child as any, this, queries, onSnapshot);
+    // TODO ? query
+    childrenFromFirestore<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[] | string[], opaque?: boolean, onSnapshot?: null, keyContainer?: KeyContainer): Promise<C[]>;
+    childrenFromFirestore<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[] | string[], opaque: boolean, onSnapshot: (objects: C[]) => void): () => void;
+    childrenFromFirestore<C extends DatabaseChildObjectType<this>>(child: new (parent: this, id?: string) => C, queries: { fieldPath: string | firebase.firestore.FieldPath, opStr: firebase.firestore.WhereFilterOp, value: any }[] | string[] = [], opaque: boolean = false, onSnapshot?: ((objects: C[]) => void) | null, keyContainer?: KeyContainer): Promise<C[]> | (() => void) {
+        return DatabaseObject.collectionFromFirestore.call(child as any, this, queries, opaque, onSnapshot, keyContainer);
     }
+
 }

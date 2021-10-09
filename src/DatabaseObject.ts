@@ -32,7 +32,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
         collection: string,
 
         ownerType: O extends App ? "app" : Extract<O, DatabaseObjectType>["databaseOptions"]["type"],
-        ownerMayRead: boolean, // --> should the secretKey be encrypted for owner?
+        ownerMayRead: boolean, // --> should the secretKey be encrypted for owner?, but always for direct owner
         ownerMayWrite: boolean, // --> is the owner allowed to sign children of this object?
 
         // TODO weiter implementieren / löschen
@@ -137,6 +137,15 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
             let secretKey: SecretKey;
 
+            if (documentData.encryptedProperties.ownerEncryptedPrivateKey["/"]) {
+                documentData.encryptedProperties.ownerEncryptedPrivateKey[""] = documentData.encryptedProperties.ownerEncryptedPrivateKey["/"];
+                delete documentData.encryptedProperties.ownerEncryptedPrivateKey["/"];
+            }
+            if (documentData.encryptedProperties.encryptedPrivateKey["/"]) {
+                documentData.encryptedProperties.encryptedPrivateKey[""] = documentData.encryptedProperties.encryptedPrivateKey["/"];
+                delete documentData.encryptedProperties.encryptedPrivateKey["/"];
+            }
+
             let publicKeys = { ...documentData.encryptedProperties.ownerEncryptedPrivateKey, ...documentData.encryptedProperties.encryptedPrivateKey };
             if (mode == "device") {
                 if (publicKeys["device"]) secretKey = await SecretKey.import(await ObjectsCrypto.decrypt(publicKeys["device"][1], await SecretKey.derive(await object.app.keyStore.getKey("device", ObjectsKeyType.PrivateEncryption) as PrivateEncryptionKey, publicEncryptionKey)));
@@ -233,19 +242,20 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
                     else throw new Error("no device key stored");
                 } else {
                     for (let o: DatabaseObjectType = object; !App.isApp(o) && o.databaseOptions.ownerMayRead; o = o.owner as DatabaseObjectType) ownerPublicKeys[o.owner.path] = o.owner.publicKey!;
+                    ownerPublicKeys[object.owner.path] = object.owner.publicKey!;
                     if (object.databaseOptions.hasPassword && object.publicKey) ownerPublicKeys[object.path] = object.publicKey;
                 }
 
                 await Promise.all([
-                    ...Object.entries(object.publicKeys ?? {}).filter(k => !ownerPublicKeys[k[0]]).map(async publicKey => encryptedPrivateKey[await publicKey[0]] = [await publicKey[1].export, await ObjectsCrypto.encrypt(await secretKey.export, await SecretKey.derive(privateEncryptionKey, publicKey[1]))]),
-                    ...Object.entries(ownerPublicKeys).map(async publicKey => ownerEncryptedPrivateKey[await publicKey[0]] = [await publicKey[1].export, await ObjectsCrypto.encrypt(await secretKey.export, await SecretKey.derive(privateEncryptionKey, publicKey[1]))])
+                    ...Object.entries(object.publicKeys ?? {}).filter(k => !ownerPublicKeys[k[0]]).map(async publicKey => encryptedPrivateKey[(await publicKey[0]) || "/"] = [await publicKey[1].export, await ObjectsCrypto.encrypt(await secretKey.export, await SecretKey.derive(privateEncryptionKey, publicKey[1]))]),
+                    ...Object.entries(ownerPublicKeys).map(async publicKey => ownerEncryptedPrivateKey[await publicKey[0] || "/"] = [await publicKey[1].export, await ObjectsCrypto.encrypt(await secretKey.export, await SecretKey.derive(privateEncryptionKey, publicKey[1]))])
                 ]);
 
 
                 documentData.encryptedProperties = {
                     encrypted: await ObjectsCrypto.encrypt(encryptedProperties, secretKey),
                     publicKey: await privateEncryptionKey.publicKey.export,
-                    publicKeyPaths: Object.keys(encryptedPrivateKey),
+                    publicKeyPaths: Object.keys(encryptedPrivateKey).map(k => k == "/" ? "" : k),
                     encryptedPrivateKey: encryptedPrivateKey,
                     ownerEncryptedPrivateKey: ownerEncryptedPrivateKey
                 };
@@ -335,7 +345,7 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
 
     // TODO überprüfen, ob richtiger path
     async getOpaquePassword(password: string): Promise<string> {
-        let opaque: { publicKey?: string, verifyKey?: string } = {};
+        let opaque: { publicKey?: string, verifyKey?: string, id: string } = { id: this.id };
         [opaque.publicKey, opaque.verifyKey] = await Promise.all([PrivateEncryptionKey.generate(password, this.path).then(k => k.publicKey.export), this.databaseOptions.passwordCanSign ? SignKey.generate(password, this.path).then(k => k.verifyKey.export) : undefined]);
         if (!this.databaseOptions.passwordCanSign) delete opaque.verifyKey;
 
@@ -343,7 +353,9 @@ export abstract class DatabaseObject<Tstring extends string, T extends DatabaseO
     }
     async setOpaquePasswort(opaque: string): Promise<this> {
         let o = JSON.parse(atob(opaque));
-        [this.publicKey, this.verifyKey] = await Promise.all([PublicEncryptionKey.import(o["keyHash"]), o["verifyKey"] ? await VerifyKey.import(o["verifyKey"]) : undefined]);
+        if (this.id != o.id) throw "wrong id";
+
+        [this.publicKey, this.verifyKey] = await Promise.all([PublicEncryptionKey.import(o["publicKey"]), o["verifyKey"] ? await VerifyKey.import(o["verifyKey"]) : undefined]);
         // TODO delete nötig?
         if (!this.databaseOptions.passwordCanSign) delete this.verifyKey;
 
