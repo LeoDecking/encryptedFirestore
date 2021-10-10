@@ -78,17 +78,17 @@ export class KeyStore {
     }
 
     async setStoragePassword(oldPassword: string, newPassword: string): Promise<void> {
-        let oldStorageKey = this.passwordCheck ? await SecretKey.generate(oldPassword, "withoutPrompt") : null;
+        let oldStorageKey = await SecretKey.generate(this.passwordCheck ? oldPassword : "", "withoutPrompt");
         if (this.passwordCheck && !await ObjectsCrypto.decrypt(this.passwordCheck, oldStorageKey!).then(null, () => false)) throw new Error("wrong password");
 
-        let [oldStoragePromptKey, newStorageKey, newStoragePromptKey] = await Promise.all([this.passwordCheck ? SecretKey.generate(oldPassword, "prompt") : null, SecretKey.generate(newPassword, "withoutPrompt"), SecretKey.generate(newPassword, "prompt")]);
+        let [oldStoragePromptKey, newStorageKey, newStoragePromptKey] = await Promise.all([SecretKey.generate(this.passwordCheck ? oldPassword : "", "prompt") , SecretKey.generate(newPassword, "withoutPrompt"), SecretKey.generate(newPassword, "prompt")]);
 
 
         await Promise.all([
-            ...(this.passwordCheck ? Object.values(this.keys).map(keys => Object.values(keys)).reduce((a, b) => [...a, ...b], []).map(async k => {
+            ...Object.values(this.keys).map(keys => Object.values(keys)).reduce((a, b) => [...a, ...b], []).map(async k => {
                 if (!k?.encryptedKey) return;
                 k.encryptedKey = await ObjectsCrypto.encrypt(await ObjectsCrypto.decrypt(k.encryptedKey, k.prompt ? oldStoragePromptKey! : oldStorageKey!), k.prompt ? newStoragePromptKey : newStorageKey);
-            }) : []),
+            }),
             ObjectsCrypto.encrypt(true, newStorageKey).then(c => this.passwordCheck = c) as Promise<void>
         ]);
     }
