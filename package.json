@@ -22,6 +22,6 @@
     "@stablelib/utf8": "^1.0.0",
     "bigi": "^1.4.2",
     "ecurve": "^1.0.6",
-    "firebase": "^8.2.1"
+    "firebase": "^8.10.1"
   }
 }
